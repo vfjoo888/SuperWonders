@@ -178,10 +178,20 @@ static uint32_t svc_arbitrate_unlock(uint64_t addr) {
     return 0;
 }
 
+// NX_KERNEL_OLD_CV=1: the condvar wait as before these two fixes (bisecting).
+static bool old_cv() {
+    static const bool on = std::getenv("NX_KERNEL_OLD_CV") != nullptr;
+    return on;
+}
+
 static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t tag, int64_t timeout) {
     std::unique_lock lk(g_k);
     KThread* self = t_self;
-    unlock_mutex(mutex);
+    // The condvar is marked as waited on, and this thread queued, BEFORE the mutex is released. A signaller checks
+    // that mark in guest code without a system call: released first, another thread could take the mutex, change the
+    // state, see no waiter, skip svcSignalProcessWideKey, and this thread slept forever (a lost wake: the rare hang
+    // at boot, the main thread waiting on a mutex). Savage Wind fixed the same order (docs/SAVAGE-WIND.md).
+    if (old_cv()) unlock_mutex(mutex);
     self->wake = false;
     self->wait_mutex = mutex;
     self->wait_key = key;
@@ -189,7 +199,15 @@ static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t
     self->wait_result = 0;
     g_cv_waiters.push_back(self);
     store32(key, 1);
+    if (!old_cv()) unlock_mutex(mutex);
     if (block(lk, self, timeout)) return self->wait_result;
+    // A timeout after a signal already moved this thread to the mutex queue does not count: the signal was taken, so
+    // the thread waits (without a time limit) to be handed the mutex, as on Horizon. Returning "timed out" there lost
+    // the signal.
+    if (!old_cv() && std::find(g_mutex_waiters.begin(), g_mutex_waiters.end(), self) != g_mutex_waiters.end()) {
+        block(lk, self, -1);
+        return self->wait_result;
+    }
     // Timed out (not handed the mutex): leave the condvar, or the mutex queue a signal moved us to, and return
     // without the mutex. Like Horizon: the SDK re-locks it itself (TimedWait -> InternalCriticalSection::Enter);
     // returning with it held made that Enter wait on ourselves forever.
