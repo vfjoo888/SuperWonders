@@ -288,7 +288,8 @@ uint32_t governor_max(uint64_t now) {
 // fast ones (docs/nvn/DEBUG.md #43). From that call site (lr main+e16ac, x19 = the framework): a histogram of that
 // time every 600 frames, and NX_MAX_INTERVAL=1 clamps the game's own maximum to 1 (fields 0x24c/0x264/0x268).
 std::atomic<int> g_frame_cap{60};  // set_frame_cap: 60, or 30
-int frame_cap() {
+std::atomic<int> g_cap_hold{0};    // hold_frame_cap: a lower cap for a moment the game needs at its own rate, 0: none
+int frame_cap_setting() {
     static const int forced = [] {
         const char* e = std::getenv("NX_FPS_CAP");
         if (!e) return 0;
@@ -302,6 +303,10 @@ int frame_cap() {
     }();
     if (until && g_frame.load(std::memory_order_relaxed) < until) return 30;
     return forced ? forced : g_frame_cap.load(std::memory_order_relaxed);
+}
+int frame_cap() {
+    const int cap = frame_cap_setting(), hold = g_cap_hold.load(std::memory_order_relaxed);
+    return hold && hold < cap ? hold : cap;
 }
 
 // The 30 fps cap: the game's own interval set to 2 (fw[0x264], fw[0x268] and the value it presents with), the mode
@@ -501,6 +506,16 @@ NX_HLE("nvnWindowGetNumActiveTextures", WindowGetNumActiveTextures);
 NX_HLE("nvnWindowSetNumActiveTextures", WindowSetNumActiveTextures);
 NX_HLE("nvnWindowGetPresentInterval", WindowGetPresentInterval);
 NX_HLE("nvnWindowSetPresentInterval", WindowSetPresentInterval);
+
+// A game asks for its own rate for a moment (games/wonder/seed_guard.cpp): the cap drops to fps until released
+// (0), the setting is untouched. held_frame_cap() is the hold in force (0: none).
+void hold_frame_cap(int fps) {
+    g_cap_hold.store(fps, std::memory_order_relaxed);
+}
+int held_frame_cap() {
+    const int hold = g_cap_hold.load(std::memory_order_relaxed);
+    return hold && hold < frame_cap_setting() ? hold : 0;
+}
 
 void set_frame_cap(int fps) {
     const int cap = fps == 30 || fps == 60 || fps == 90 || fps == 120 || fps == 144 ? fps : 60;

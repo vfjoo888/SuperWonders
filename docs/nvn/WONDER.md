@@ -101,6 +101,16 @@ can override the saved cap and takes precedence over `NX_NO_FRAME_LIMIT`. The me
 reports the applied simulation-time / elapsed-time ratio, rather than FPS divided by 60.
 
 This uses the game's existing VFR ratio and time-step fields; it does not scale the system clock or unrelated waits.
+
+Steps shorter than a 60 Hz frame are something the game never had on the Switch, and a few of its checks race at
+them. Known and handled: the Wonder Seed that comes out of a pipe at the end of a Wonder (1-2 and others; also in
+plain 0.4.0). Its appearance (AI `ItemAppearNextGoto`, pickup sensor "Target" off) ends when its "Land" animation
+does, 0.20 s after it touches down, but its ground contact goes 0.18 s after touchdown and the AI then plays "Fall",
+which never ends: at 60 FPS the checks fall at 0.183 s and 0.200 s and it lands; at 120 one falls at 0.175 s and the
+seed stays untakeable. `games/wonder/seed_guard.cpp` keeps that seed's ground contact once it has touched down,
+until its sensor is back on (only Wonder Seeds, only in that window; it changes nothing at 60 FPS).
+`NX_SEED_GUARD=60` holds the frame cap at 60 for that window instead, `NX_SEED_GUARD=0` turns it off. Other items
+that come out of pipes use the same AI and may race the same way (not seen yet).
 The patch verifies the original instruction words, so another game version fails the game-code build instead of being
 patched silently. The addresses and instruction sequence were cross-checked against the Wonder frame-step analysis in
 [MacNativeGames](https://github.com/ly05010419/MacNativeGames/blob/main/games/wonder/runtime/game_patches_wonder.c).

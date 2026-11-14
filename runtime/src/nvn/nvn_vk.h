@@ -73,6 +73,8 @@ void set_anisotropy(int level);
 void set_vsync(int mode);
 // The player's frame rate cap, 60 or 30 (nvn_queue.cpp, pace_present). NX_FPS_CAP=30|60 overrides it.
 void set_frame_cap(int fps);
+void hold_frame_cap(int fps);  // a lower cap for a moment (0: release); the setting is untouched
+int held_frame_cap();          // the hold in force, 0: none
 bool vk_depth_clip_control();
 // VK_EXT_graphics_pipeline_library is enabled and used (nvn_pipeline.cpp; NX_GPL, nvn_vk.cpp).
 bool vk_gpl();

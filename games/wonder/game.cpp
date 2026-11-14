@@ -88,14 +88,21 @@ static void trace_screen_globals() {
 
 }  // namespace
 
+namespace nvn {
+int held_frame_cap();
+}
+
 namespace wonder {
 void menu_init();
+void seed_guard_init();
+void seed_guard_tick(uint64_t now_ns);
 }
 
 void game::after_init() {
     init_frame_step();
     trace_screen_globals();
     wonder::menu_init();
+    wonder::seed_guard_init();
 }
 void game::renderer_start() {}
 void game::first_frame() {}
@@ -129,7 +136,13 @@ void game::frame_presented(uint64_t now_ns, int present_interval) {
     }
 
     double seconds = double(std::max(1, present_interval)) / 60.0;
-    if (realtime) {
+    wonder::seed_guard_tick(now_ns);
+    if (realtime && nvn::held_frame_cap() == 60) {
+        // A moment the game needs at its own rate (seed_guard.cpp): presented at 60, a 60 Hz step each frame; the
+        // average starts again when the hold ends.
+        seconds = 1.0 / 60.0;
+        sample_count = sample_next = 0;
+    } else if (realtime) {
         samples[sample_next++ % 5] = dt;
         if (sample_count < 5) ++sample_count;
         seconds = 0;
