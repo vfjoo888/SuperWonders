@@ -11,7 +11,9 @@ Steps, each skipped when its inputs and tools haven't changed since it last fini
     3. shaders    the game's shaders found and translated to SPIR-V           -> spirv/, shader_programs.bin
                   (tools/maxwell/: extract_romfs_shaders.py, exefs_shaders.py, then the translator, spirv_harness)
     4. font       the controller-button font, drawn over a system font        -> fonts/shared_5.ttf
-    5. code       the game code library (tools/gamebuild.py)                  -> game/wonder_game.dll, build-id.txt
+    5. menu       "Quit Game" in the pause menu and on the title screen, as a RomFS mod (tools/wonder_menu_mod.py)
+                                                                              -> mods/recomp-menu/romfs/
+    6. code       the game code library (tools/gamebuild.py)                  -> game/wonder_game.dll, build-id.txt
 The work files of steps 3 and 5 hold the player's game and are removed when the step finishes.
 
 Progress: "progress <0..1> <what>" lines for the launcher (RecompLauncher's prepare protocol); exit 0 when it worked.
@@ -38,7 +40,8 @@ TOOLS = os.path.join(ROOT, "tools") if os.path.isdir(os.path.join(ROOT, "tools")
 WIN = os.name == "nt"
 EXIT_NEEDS_SETUP = 10
 # (step, share of the progress bar)
-STEPS = (("analysis", 0.02), ("romfs", 0.13), ("shaders", 0.30), ("font", 0.01), ("code", 0.54))
+STEPS = (("analysis", 0.02), ("romfs", 0.13), ("shaders", 0.30), ("font", 0.01), ("menu", 0.01), ("code", 0.53))
+MENU_MOD = "recomp-menu"  # <data root>/mods/<this>: the name games/wonder/menu.cpp's docs (docs/MENU.md) use
 
 
 def say(fraction, what):
@@ -126,6 +129,7 @@ class Setup:
                 "romfs": rom_id,
                 "shaders": h_files(maxwell, (exe_id + rom_id + " ".join(harness or [])).encode()),
                 "font": h_files([os.path.join(TOOLS, "fonts", "make_button_font.py")], font.encode()),
+                "menu": h_files([os.path.join(TOOLS, "wonder_menu_mod.py")], rom_id.encode()),
             }
         return self._ids
 
@@ -153,7 +157,7 @@ class Setup:
         """[(step, why)] still to do."""
         s, ids, out = self.state(), self.ids(), []
         names = {"analysis": "the game's executable", "romfs": "the game's files", "shaders": "the shaders",
-                 "font": "the button font"}
+                 "font": "the button font", "menu": "Quit Game in the game's menus"}
         for step, _ in STEPS:
             if step == "code":
                 why = gamebuild.why_build(self.kit, self.exefs, os.path.join(self.data, "game"))
@@ -244,6 +248,18 @@ class Setup:
         self.run([self.py, os.path.join(TOOLS, "fonts", "make_button_font.py"), "--base", base, "--out", out],
                  at, share, "Drawing the button font")
 
+    def step_menu(self, at, share):
+        # Without this mod games/wonder/menu.cpp has no pane to act on: the pause menu has no Quit Game (the title
+        # screen's hold-Minus still works). Not fatal: a RomFS the tool doesn't know only loses the entry.
+        out = os.path.join(self.data, "mods", MENU_MOD)
+        try:
+            self.run([self.py, os.path.join(TOOLS, "wonder_menu_mod.py"), "--romfs", self.romfs, "--out", out],
+                     at, share, "Adding Quit Game to the game's menus")
+        except SystemExit as e:
+            print(f"warning: {e}; the game runs without Quit Game in its pause menu", flush=True)
+            return False
+        return True
+
     def step_code(self, at, share):
         cmd = [self.py, "-u", os.path.join(HERE, "gamebuild.py"), "build", "--exefs", self.exefs, "--data-root",
                self.data, "--jobs", str(self.jobs)]
@@ -266,8 +282,8 @@ class Setup:
         for step, share in STEPS:
             if step in todo:
                 print(f"{step}: {todo[step]}", flush=True)
-                getattr(self, "step_" + step)(at, share)
-                if step != "code":
+                ok = getattr(self, "step_" + step)(at, share)
+                if step != "code" and ok is not False:
                     self.done(step, self.ids()[step])
             at += share
             say(at, "Set up" if at >= 1 else "Setting up")

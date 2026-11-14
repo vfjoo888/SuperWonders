@@ -9,7 +9,7 @@ from their own files (tools/setup_game.py). Nothing of the game is in it. Packin
     SuperWonders/superwonders-manifest.txt                 every file above and below: size and SHA-256 (the updater
                                                            checks an update against it, and removes only what it names)
     SuperWonders/game-build/setup_game.py, gamebuild.py    the setup
-    SuperWonders/game-build/recomp/, tools/                the recompiler, nso2bin, the shader and font tools
+    SuperWonders/game-build/recomp/, tools/                the recompiler, nso2bin, the shader, font and menu tools
     SuperWonders/game-build/include/nx/, gamelib_entry.cpp what the generated code includes, the library's entry
     SuperWonders/game-build/translator/                    the shader translator (a self-contained spirv_harness)
     SuperWonders/game-build/python/                        a Python with capstone, lz4, zstandard and fontTools (Windows)
@@ -158,6 +158,7 @@ def pack_kit(kit, a):
         copy(f, os.path.join(kit, "recomp", os.path.basename(f)))
     copy(os.path.join(REPO, "tools", "nso2bin.py"), os.path.join(kit, "tools", "nso2bin.py"))
     copy(os.path.join(REPO, "tools", "fonts", "make_button_font.py"), os.path.join(kit, "tools", "fonts", "make_button_font.py"))
+    copy(os.path.join(REPO, "tools", "wonder_menu_mod.py"), os.path.join(kit, "tools", "wonder_menu_mod.py"))
     open(os.path.join(kit, "tools", "__init__.py"), "w").close()
     for f in glob.glob(os.path.join(REPO, "tools", "maxwell", "*.py")):
         copy(f, os.path.join(kit, "tools", "maxwell", os.path.basename(f)))

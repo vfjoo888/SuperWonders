@@ -1148,7 +1148,22 @@ VkPipeline graphics_pipeline(const PipelineKey& draw_key, const ProgramLayout& l
         // A library or the link failed: compiled whole below.
     }
 
-    // A draw that may skip a frame: compiled on a worker meanwhile (nvn_pipeline_async.h).
+    // A draw that may skip a frame: compiled on a worker meanwhile (nvn_pipeline_async.h). But first, as GPL's step
+    // 1: a pipeline an earlier run compiled is in the pipeline cache, and made from there in about 0.1 ms, so its
+    // draw need not skip a frame. Without this every warm run still skipped each new pipeline's first draw, and
+    // layers flashed off as they came on screen (Windows, AMD, GPL off: 6,620 draws in a session, cache loaded).
+    if (may_skip && async_pipelines() && !vk_gpl() && vk_pipeline_cache_control() && pipeline_cache()) {
+        ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+        VkPipeline p = VK_NULL_HANDLE;
+        const uint64_t t0 = plat::monotonic_ns();
+        const VkResult r = p_vkCreateGraphicsPipelines(vk_device(), pipeline_cache(), 1, &ci, nullptr, &p);
+        ci.flags &= ~VkPipelineCreateFlags(VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT);
+        if (r == VK_SUCCESS && p) {
+            note_pipeline_created(plat::monotonic_ns() - t0);
+            record_pipeline_key(key);
+            return store(p);
+        }
+    }
     if (may_skip && async_pipelines()) {
         pending.emplace(k, compile_pipeline_async(build));
         return g_pipelines_skipped++, VK_NULL_HANDLE;

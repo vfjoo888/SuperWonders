@@ -227,6 +227,9 @@ bool init() {
         // cache files moved aside, a separate pipeline cache, a specialization constant, a renamed entry point,
         // distinct static state and a distinct VkApplicationInfo engine). An in-place update of an existing install
         // would hit it, so GPL is opt-in there until the cause is known. GPL alone on an exe path renders right.
+        // On Linux's AMD drivers (RADV, RX 9070 XT, 0.4.0) GPL draws dark patches on the course ground and fences
+        // until the camera passes them, and the picture flashes; NX_GPL=0 is clean at 60 and 120 fps. So GPL is
+        // opt-in on every AMD GPU (vendor 0x1002), whatever the driver.
         const char* e = std::getenv("NX_GPL");
         VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT pgpl{
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT};
@@ -234,8 +237,8 @@ bool init() {
         VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &pdrv};
         if (!(gpl_ext && fgpl.graphicsPipelineLibrary)) pdrv.pNext = nullptr;
         p_vkGetPhysicalDeviceProperties2(g_physical, &p2);
-        const bool amd_proprietary = pdrv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY;
-        const bool wanted = e ? e[0] != '0' : !amd_proprietary;
+        const bool amd = p2.properties.vendorID == 0x1002;
+        const bool wanted = e ? e[0] != '0' : !amd;
         const bool forced = e && e[0] == '1';
         g_gpl = wanted && gpl_ext && fgpl.graphicsPipelineLibrary && f13.dynamicRendering &&
                 (pgpl.graphicsPipelineLibraryFastLinking || forced);
@@ -244,7 +247,7 @@ bool init() {
             "interpolation %u: %s; pipelineCreationCacheControl %u",
             gpl_ext ? 1u : 0u, fgpl.graphicsPipelineLibrary, pgpl.graphicsPipelineLibraryFastLinking,
             pgpl.graphicsPipelineLibraryIndependentInterpolationDecoration,
-            g_gpl ? "used" : !wanted ? (e ? "off (NX_GPL=0)" : "off by default on AMD's proprietary driver (NX_GPL=1: on)") : "not used",
+            g_gpl ? "used" : !wanted ? (e ? "off (NX_GPL=0)" : "off by default on AMD GPUs (NX_GPL=1: on)") : "not used",
             g_cache_control ? 1u : 0u);
         if (g_gpl) {
             dexts.push_back("VK_KHR_pipeline_library");
