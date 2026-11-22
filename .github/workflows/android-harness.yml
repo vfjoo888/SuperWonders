@@ -65,7 +65,7 @@ jobs:
             -c Release \
             -r linux-musl-arm64 \
             -p:PublishAot=true \
-            -p:StripSymbols=true \
+            -p:StripSymbols=false \
             -o out/spirv_harness
           file out/spirv_harness/spirv_harness
           ls -lh out/spirv_harness/spirv_harness
