@@ -31,8 +31,21 @@ jobs:
             | tar -xJ -C /tmp
           mkdir -p /tmp/zig-wrap
           cat << 'EOF' > /tmp/zig-wrap/clang
-          #!/bin/sh
-          exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static "$@"
+          #!/bin/bash
+          args=()
+          is_link=0
+          for a in "$@"; do
+            case "$a" in
+              -pie|-Wl,-pie|-rdynamic|-Wl,--export-dynamic|-Wl,-Bdynamic) ;;
+              *.o|*.a) is_link=1; args+=("$a") ;;
+              *) args+=("$a") ;;
+            esac
+          done
+          if [ "$is_link" -eq 1 ]; then
+            exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static "${args[@]}"
+          else
+            exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl "${args[@]}"
+          fi
           EOF
           cat << 'EOF' > /tmp/zig-wrap/objcopy
           #!/bin/sh
