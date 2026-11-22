@@ -32,16 +32,16 @@ jobs:
           mkdir -p /tmp/zig-wrap
           cat << 'EOF' > /tmp/zig-wrap/clang
           #!/bin/bash
+          has_c=0
           args=()
-          is_link=0
           for a in "$@"; do
             case "$a" in
-              -pie|-Wl,-pie|-rdynamic|-Wl,--export-dynamic|-Wl,-Bdynamic) ;;
-              *.o|*.a) is_link=1; args+=("$a") ;;
+              -c|--version) has_c=1; args+=("$a") ;;
+              -pie|-Wl,-pie|-rdynamic|-Wl,--export-dynamic|-Wl,-Bdynamic|-fuse-ld=*) ;;
               *) args+=("$a") ;;
             esac
           done
-          if [ "$is_link" -eq 1 ]; then
+          if [ "$has_c" -eq 0 ]; then
             exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static "${args[@]}"
           else
             exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl "${args[@]}"
