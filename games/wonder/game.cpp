@@ -26,11 +26,11 @@ static std::atomic<bool> g_stage_load_ended{false};
 static std::atomic<bool> g_course_demo_active{false};
 static std::atomic<bool> g_in_course_session{false};
 static std::atomic<bool> g_in_house_session{false};
+static std::atomic<bool> g_house_cap_held{false};
 static std::atomic<bool> g_player_died{false};
 static std::atomic<uint64_t> g_stage_ready_ns{0};
 
 void game::file_opened(const char* path) {
-    static std::atomic<bool> held{false};
     static std::mutex world_mu;
     static std::string current_world = "World";
     // Update Discord Rich Presence when entering a world map or course.
@@ -56,9 +56,10 @@ void game::file_opened(const char* path) {
     }
     // The map can remain resident while entering a course, so returning to it does not necessarily reopen its
     // StageLoadInfo. Its world music does reopen when the player returns from this house.
-    if (held.load() && std::strstr(path, "/Sound/Resource/Stream/BGM_World_") && held.exchange(false)) {
+    if (g_house_cap_held.load(std::memory_order_relaxed) && std::strstr(path, "/Sound/Resource/Stream/BGM_World_") &&
+        g_house_cap_held.exchange(false, std::memory_order_relaxed)) {
         nvn::hold_scene_frame_cap(0);
-        log("wonder: first house scene left for world map: selected frame cap restored");
+        log("wonder: house scene left for world map: selected frame cap restored");
         return;
     }
     constexpr const char* prefix = "/Stage/StageLoadInfo/";
@@ -67,8 +68,9 @@ void game::file_opened(const char* path) {
     scene += std::strlen(prefix);
     if (std::strncmp(scene, "World", 5) == 0) discord::set_activity("On the World Map", "Exploring the Flower Kingdom");
     else if (std::strncmp(scene, "Course", 6) == 0) discord::set_activity("Playing a Course", "Flower Kingdom");
-    constexpr const char* house = "Course500_Course.game__stage__StageLoadInfo.bgyml";
-    const bool in_house = std::strcmp(scene, house) == 0;
+    const bool in_house = std::strncmp(scene, "Course5", 7) == 0 && scene[7] >= '0' && scene[7] <= '9' &&
+                          scene[8] >= '0' && scene[8] <= '9' &&
+                          std::strcmp(scene + 9, "_Course.game__stage__StageLoadInfo.bgyml") == 0;
     if (std::strncmp(scene, "World", 5) == 0) {
         if (!overlay::speedrun_is_armed()) {
             g_in_course_session.store(false, std::memory_order_relaxed);
@@ -93,9 +95,9 @@ void game::file_opened(const char* path) {
         overlay::speedrun_set_course(!in_house, wname.c_str(), cname);
         if (!in_house) log("speedrun: armed course %s (%s)", cname, wname.c_str());
     }
-    if (held.exchange(in_house) != in_house) {
+    if (g_house_cap_held.exchange(in_house, std::memory_order_relaxed) != in_house) {
         nvn::hold_scene_frame_cap(in_house ? 60 : 0);
-        log("wonder: first house scene %s: %s", in_house ? "loading" : "left",
+        log("wonder: house scene %s (%s): %s", scene, in_house ? "loading" : "left",
             in_house ? "frame cap held at 60 for dialogue compatibility" : "selected frame cap restored");
     }
 }
@@ -897,6 +899,10 @@ void game::frame_presented(uint64_t now_ns, int present_interval) {
             }
         } else if (wmap || (prev_pcount > 0 && pcount == 0)) {
             g_in_house_session.store(false, std::memory_order_relaxed);
+            if (g_house_cap_held.exchange(false, std::memory_order_relaxed)) {
+                nvn::hold_scene_frame_cap(0);
+                log("wonder: house scene left for world map: selected frame cap restored");
+            }
         } else if (!wmap && pcount > 0 && !g_in_house_session.load(std::memory_order_relaxed) &&
                    g_stage_mgr_off.load(std::memory_order_relaxed) != 0) {
             g_in_course_session.store(true, std::memory_order_relaxed);

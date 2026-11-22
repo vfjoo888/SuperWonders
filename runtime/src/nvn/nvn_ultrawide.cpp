@@ -22,6 +22,7 @@
 
 #include "kernel.h"
 #include "platform.h"
+#include "svc_am.h"
 
 namespace nx::nvn {
 
@@ -68,8 +69,15 @@ bool uw_is_target(const Texture& t) {
 }
 
 uint32_t uw_host_width(const Texture& t, float render_scale) {
-    const double factor = uw_is_target(t) ? double(uw_factor()) : 1.0;
-    return std::max(1u, uint32_t(std::lround(double(t.width) * double(render_scale) * factor)));
+    if (!uw_is_target(t)) return std::max(1u, uint32_t(std::lround(double(t.width) * double(render_scale))));
+    uint32_t w = std::max(2u, uint32_t(std::lround(double(t.width) * double(render_scale) * double(uw_factor()))));
+    w &= ~1u;
+    if (internal_resolution_preset() == 6 && t.width >= 1360) {
+        uint32_t dw = 0, dh = 0;
+        native_display_size(dw, dh);
+        if (dw >= 640 && std::abs(int64_t(dw) - int64_t(w)) <= 2) w = dw;
+    }
+    return w;
 }
 
 bool uw_widen_texture(Texture& t) {

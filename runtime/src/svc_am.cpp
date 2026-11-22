@@ -32,6 +32,8 @@ void set_internal_resolution_preset(int preset) {
     g_internal_resolution_preset.store(preset, std::memory_order_relaxed);
 }
 
+int internal_resolution_preset() { return g_internal_resolution_preset.load(std::memory_order_relaxed); }
+
 float internal_resolution_scale() {
     // 0: original, 1: 720p, 2: 900p, 3: 1080p, 4: 1440p, 5: 2160p, 6: native, 7: 540p, 8: 480p, 9: 360p
     static constexpr float scales[] = {1.0f, 2.0f / 3.0f, 5.0f / 6.0f, 1.0f, 4.0f / 3.0f, 2.0f, 0.0f,

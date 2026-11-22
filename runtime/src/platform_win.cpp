@@ -637,7 +637,16 @@ static bool parse_pc_settings_file(const std::filesystem::path& ini_path, PcMenu
     return true;
 }
 
+static void ensure_dpi_aware() {
+    static const bool done = [] {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        return true;
+    }();
+    (void)done;
+}
+
 static void apply_loaded_pc_settings(const PcMenuState& state) {
+    ensure_dpi_aware();
     nx::set_internal_resolution_preset(state.internal_resolution);
     nx::set_audio_output(state.audio_mode, state.stereo_separation);
     nx::set_game_language(state.game_language);
@@ -1159,6 +1168,7 @@ void overlay_presented(uint64_t now_ns) {
 }
 
 void window_size(uint32_t& w, uint32_t& h) {
+    ensure_dpi_aware();
     if (g_window) {
         RECT r{};
         GetClientRect(g_window, &r);

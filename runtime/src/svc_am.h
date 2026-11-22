@@ -5,6 +5,7 @@ namespace nx {
 
 // Preset selected in the Windows quick settings; zero leaves the game's default mode unchanged.
 void set_internal_resolution_preset(int preset);
+int internal_resolution_preset();
 float internal_resolution_scale();
 uint32_t internal_resolution_target_width();
 void set_native_render_width(uint32_t width);  // internal resolution Native: the presented width
