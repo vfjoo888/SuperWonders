@@ -25,11 +25,19 @@ jobs:
           curl -fsSL https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz \
             | tar -xz -C private/third_party/ryubing --strip-components=1
 
-      - name: Setup Zig 0.14.0 (static aarch64-linux-musl linker)
+      - name: Setup Zig 0.14.0 + static libz.a (aarch64-linux-musl)
         run: |
           curl -fsSL https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz \
             | tar -xJ -C /tmp
-          mkdir -p /tmp/zig-wrap
+          curl -fsSL https://zlib.net/fossils/zlib-1.3.1.tar.gz | tar -xz -C /tmp
+          mkdir -p /tmp/zlib-out /tmp/zig-wrap
+          ZIG=/tmp/zig-linux-x86_64-0.14.0/zig
+          for f in /tmp/zlib-1.3.1/*.c; do
+            case "$f" in *example*|*minigzip*) continue ;; esac
+            "$ZIG" cc -target aarch64-linux-musl -O2 -c "$f" -o "/tmp/zlib-out/$(basename "$f" .c).o"
+          done
+          "$ZIG" ar rcs /tmp/zlib-out/libz.a /tmp/zlib-out/*.o
+
           cat << 'EOF' > /tmp/zig-wrap/clang
           #!/bin/bash
           has_c=0
@@ -42,7 +50,7 @@ jobs:
             esac
           done
           if [ "$has_c" -eq 0 ]; then
-            exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static "${args[@]}"
+            exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static -L/tmp/zlib-out "${args[@]}"
           else
             exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl "${args[@]}"
           fi
