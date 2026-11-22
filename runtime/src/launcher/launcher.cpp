@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #if defined(_WIN32)
@@ -34,6 +35,7 @@
 #include "nvn/nvn_vk.h"
 #include "overlay/option_rows.h"
 #include "overlay/overlay.h"
+#include "overlay/overlay_internal.h"
 #include "overlay/overlay_ui.h"
 #include "platform.h"
 #include "user_profiles.h"
@@ -935,6 +937,9 @@ void profile_dialog(bool open) {
         std::snprintf(name, sizeof name, "%s", db.users[edited].name.c_str());
         std::snprintf(icon, sizeof icon, "%s", db.users[edited].icon.c_str());
     };
+    const float k = g_k;
+    const ui::Theme& th = ui::theme();
+    const ImGuiIO& io = ImGui::GetIO();
     const fs::path root = u8(plat::data_root());
     if (open) {
         db = profiles::load(root);
@@ -943,20 +948,97 @@ void profile_dialog(bool open) {
         copy_to = db.users.size() > 1 ? (edited == 0 ? 1 : 0) : 0;
         read_fields();
         message = db.valid ? "" : "Profile file is invalid or unreadable; it will not be overwritten.";
-        ImGui::OpenPopup("Profiles");
+        ImGui::OpenPopup("##profiles_modal");
     }
-    ImGui::SetNextWindowSize({720, 540}, ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal("Profiles", nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
-    ImGui::TextUnformatted("Choose the profile used when the game starts.");
-    if (ImGui::BeginCombo("Profile", db.users[edited].name.c_str())) {
-        for (int i = 0; i < int(db.users.size()); ++i) {
-            ImGui::PushID(i);
-            if (ImGui::Selectable(db.users[i].name.c_str(), i == edited)) edited = i, read_fields(), message.clear();
-            ImGui::PopID();
+    ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Appearing, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({std::min(io.DisplaySize.x * 0.92f, 1080 * k), 0}, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {32 * k, 28 * k});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * k);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10 * k);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {14 * k, 9 * k});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {12 * k, 12 * k});
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImGui::ColorConvertU32ToFloat4(th.card));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImGui::ColorConvertU32ToFloat4(ui::mix(th.card, th.accent, 0.45f)));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::ColorConvertU32ToFloat4(th.panel));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.18f)));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.28f)));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.35f)));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.22f)));
+    const bool modal_open = ImGui::BeginPopupModal(
+        "##profiles_modal", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    if (!modal_open) {
+        ImGui::PopStyleColor(7);
+        ImGui::PopStyleVar(5);
+        return;
+    }
+
+    auto end_profiles_modal = [&] {
+        ImGui::EndPopup();
+        ImGui::PopStyleColor(7);
+        ImGui::PopStyleVar(5);
+    };
+
+    const ImVec4 builtin_colors[6] = {
+        {0.27f, 0.53f, 0.90f, 1}, {0.94f, 0.47f, 0.37f, 1}, {0.35f, 0.71f, 0.55f, 1},
+        {0.65f, 0.44f, 0.81f, 1}, {0.91f, 0.68f, 0.27f, 1}, {0.25f, 0.71f, 0.75f, 1},
+    };
+    const char* builtin_names[6] = {"Blue diamond", "Coral circle", "Green cross", "Purple diamond", "Gold circle", "Teal cross"};
+
+    static std::unordered_map<std::string, uint64_t> icon_cache;
+    auto draw_avatar = [&](ImDrawList* dl, ImVec2 center, float radius, const std::string& icon_str) {
+        int bi = -1;
+        if (std::strncmp(icon_str.c_str(), "builtin:", 8) == 0) {
+            bi = std::atoi(icon_str.c_str() + 8);
+            if (bi < 0 || bi >= 6) bi = -1;
         }
-        ImGui::EndCombo();
-    }
-    ImGui::InputText("Name", name, sizeof name);
+        if (bi < 0 && !icon_str.empty()) {
+            auto it = icon_cache.find(icon_str);
+            if (it == icon_cache.end()) {
+                const auto rgba = profiles::decode_icon_rgba(u8(icon_str), 128);
+                const uint64_t id = !rgba.empty() ? overlay::vk_upload_rgba_texture(rgba.data(), 128, 128) : 0;
+                it = icon_cache.emplace(icon_str, id).first;
+            }
+            if (it->second) {
+                dl->AddImageRounded((ImTextureID)(uintptr_t)it->second,
+                                    {center.x - radius, center.y - radius},
+                                    {center.x + radius, center.y + radius},
+                                    {0, 0}, {1, 1}, IM_COL32_WHITE, radius);
+                return;
+            }
+        }
+        const ImU32 bg = bi >= 0 ? ImGui::ColorConvertFloat4ToU32(builtin_colors[bi])
+                                 : (!icon_str.empty() ? th.accent : ui::mix(th.panel, th.text_off, 0.25f));
+        dl->AddCircleFilled(center, radius, bg, 24);
+        if (bi >= 0) {
+            const float s = radius * 0.46f;
+            const ImU32 fg = IM_COL32(255, 255, 255, 230);
+            if (bi % 3 == 0) {  // diamond
+                dl->AddQuadFilled({center.x, center.y - s}, {center.x + s, center.y},
+                                  {center.x, center.y + s}, {center.x - s, center.y}, fg);
+            } else if (bi % 3 == 1) {  // circle
+                dl->AddCircleFilled(center, s * 0.78f, fg, 20);
+            } else {  // cross
+                const float t = s * 0.34f;
+                dl->AddRectFilled({center.x - s, center.y - t}, {center.x + s, center.y + t}, fg, 2 * k);
+                dl->AddRectFilled({center.x - t, center.y - s}, {center.x + t, center.y + s}, fg, 2 * k);
+            }
+        }
+    };
+
+    // Header
+    ImGui::PushFont(ui::title());
+    ImGui::SetWindowFontScale(0.66f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text));
+    ImGui::TextUnformatted("Profiles");
+    ImGui::PopStyleColor();
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopFont();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text_dim));
+    ImGui::TextUnformatted("Choose the profile used when the game starts, or customize its name and icon.");
+    ImGui::PopStyleColor();
+    ImGui::Dummy({0, 6 * k});
+
     {
         std::lock_guard lk(image_lock);
         if (!picked_image.empty()) {
@@ -964,25 +1046,62 @@ void profile_dialog(bool open) {
             picked_image.clear();
         }
     }
-    ImGui::TextWrapped("Icon: %s", icon[0] ? icon : "None");
-    if (ImGui::Button("Choose image..."))
-        plat::pick_image([](std::string path) {
-            std::lock_guard lk(image_lock);
-            picked_image = std::move(path);
-        });
-    ImGui::SameLine();
-    if (ImGui::Button("No icon")) icon[0] = 0;
-    ImGui::TextUnformatted("Original icons:");
-    const char* names[] = {"Blue diamond", "Coral circle", "Green cross", "Purple diamond", "Gold circle", "Teal cross"};
-    const ImVec4 colors[] = {{0.27f,0.53f,0.90f,1},{0.94f,0.47f,0.37f,1},{0.35f,0.71f,0.55f,1},
-                             {0.65f,0.44f,0.81f,1},{0.91f,0.68f,0.27f,1},{0.25f,0.71f,0.75f,1}};
-    for (int i = 0; i < 6; ++i) {
-        if (i && i % 3) ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, colors[i]);
-        if (ImGui::Button(names[i])) std::snprintf(icon, sizeof icon, "builtin:%d", i);
-        ImGui::PopStyleColor();
+
+    const float total_w = ImGui::GetContentRegionAvail().x;
+    const float col_gap = 24 * k;
+    const float left_w = std::floor(total_w * 0.32f);
+    const float right_w = total_w - left_w - col_gap;
+
+    // Left column: profile list + Add / Copy saves
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.accent2));
+    ImGui::SetWindowFontScale(0.88f);
+    ImGui::Text("LOCAL PROFILES (%zu/8)", db.users.size());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+    ImGui::Dummy({0, 4 * k});
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(th.panel));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12 * k);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {12 * k, 12 * k});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {8 * k, 8 * k});
+    ImGui::BeginChild("##profile_list", {left_w, 316 * k}, ImGuiChildFlags_Borders);
+    ImDrawList* list_dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < int(db.users.size()); ++i) {
+        ImGui::PushID(i);
+        const bool is_edited = i == edited;
+        const bool is_active = i == int(db.selected);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const float row_w = ImGui::GetContentRegionAvail().x;
+        const float row_h = 52 * k;
+        if (ImGui::InvisibleButton("##prof_row", {row_w, row_h})) {
+            edited = i;
+            read_fields();
+            message.clear();
+        }
+        const bool hovered = ImGui::IsItemHovered();
+        const ImU32 row_bg = is_edited ? ui::mix(th.card, th.accent, 0.26f)
+                                       : (hovered ? ui::mix(th.card, th.text, 0.08f) : th.card);
+        const ImU32 row_border = is_edited ? th.accent : ui::mix(th.panel, th.text_off, 0.25f);
+        list_dl->AddRectFilled(p0, {p0.x + row_w, p0.y + row_h}, row_bg, 10 * k);
+        list_dl->AddRect(p0, {p0.x + row_w, p0.y + row_h}, row_border, 10 * k, 0, is_edited ? 2.0f : 1.0f);
+        draw_avatar(list_dl, {p0.x + 24 * k, p0.y + row_h * 0.5f}, 14 * k, db.users[i].icon);
+        list_dl->AddText({p0.x + 48 * k, p0.y + (row_h - ImGui::GetFontSize()) * 0.5f}, th.text, db.users[i].name.c_str());
+        if (is_active) {
+            const char* tag = "ACTIVE";
+            const ImVec2 ts = ImGui::CalcTextSize(tag);
+            const float bw = ts.x + 16 * k;
+            const float bh = 24 * k;
+            const ImVec2 bp{p0.x + row_w - bw - 12 * k, p0.y + (row_h - bh) * 0.5f};
+            list_dl->AddRectFilled(bp, {bp.x + bw, bp.y + bh}, ui::mix(th.panel, th.good, 0.25f), bh * 0.5f);
+            list_dl->AddText({bp.x + 8 * k, bp.y + (bh - ts.y) * 0.5f}, th.good, tag);
+        }
+        ImGui::PopID();
     }
-    ImGui::TextWrapped("Images are cropped to a square and converted to 256x256 JPEG.");
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+
     auto valid = [&] {
         if (!name[0]) { message = "Enter a name."; return false; }
         return true;
@@ -1012,40 +1131,176 @@ void profile_dialog(bool open) {
         user.icon = str(dest);
         return true;
     };
-    if (ImGui::Button("Save changes") && valid()) {
-        auto next = db;
-        next.users[edited].name = name;
-        if (!set_icon(next.users[edited])) { ImGui::EndPopup(); return; }
-        if (profiles::save(root, next)) db = std::move(next), message = "Profile saved.";
-        else message = "Could not save profiles.";
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Use this profile")) {
-        auto next = db;
-        next.selected = size_t(edited);
-        if (profiles::save(root, next)) db = std::move(next), message = "Selected for the next launch.";
-        else message = "Could not save profiles.";
-    }
-    ImGui::SameLine();
+
     const bool at_limit = db.users.size() >= 8;
     if (at_limit) ImGui::BeginDisabled();
-    if (ImGui::Button("Add profile") && valid()) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(th.panel));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.25f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(th.panel));
+    if (ImGui::Button("+ Add profile", {left_w, 42 * k}) && valid()) {
         auto next = db;
         auto user = profiles::make_user(next, name);
-        if (!set_icon(user)) { ImGui::EndPopup(); return; }
+        if (!set_icon(user)) { ImGui::PopStyleColor(3); ImGui::EndGroup(); end_profiles_modal(); return; }
         next.users.push_back(std::move(user));
         if (profiles::save(root, next)) {
             db = std::move(next); edited = int(db.users.size()) - 1; read_fields(); message = "Profile created; select it to play.";
         } else message = "Could not save profiles.";
     }
     if (at_limit) ImGui::EndDisabled();
-    ImGui::Separator();
-    ImGui::Text("Selected: %s", db.users[db.selected].name.c_str());
-    if (!message.empty()) ImGui::TextWrapped("%s", message.c_str());
     if (db.users.size() < 2) ImGui::BeginDisabled();
-    if (ImGui::Button("Copy saves...")) { message.clear(); ImGui::OpenPopup("Copy saves"); }
+    if (ImGui::Button("Copy saves...", {left_w, 42 * k})) { message.clear(); ImGui::OpenPopup("##copy_saves_modal"); }
     if (db.users.size() < 2) ImGui::EndDisabled();
-    if (ImGui::BeginPopupModal("Copy saves", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::PopStyleColor(3);
+    ImGui::EndGroup();
+
+    ImGui::SameLine(0, col_gap);
+
+    // Right column: edit selected profile
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.accent2));
+    ImGui::SetWindowFontScale(0.88f);
+    ImGui::TextUnformatted("PROFILE DETAILS");
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+    ImGui::Dummy({0, 4 * k});
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(th.panel));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12 * k);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {22 * k, 20 * k});
+    ImGui::BeginChild("##profile_editor", {right_w, 412 * k}, ImGuiChildFlags_Borders);
+
+    // Preview + Name row
+    {
+        ImDrawList* ed_dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const float av = 58 * k;
+        ImGui::Dummy({av, av});
+        draw_avatar(ed_dl, {p0.x + av * 0.5f, p0.y + av * 0.5f}, av * 0.45f, icon);
+        ImGui::SameLine(0, 16 * k);
+        ImGui::BeginGroup();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text_dim));
+        ImGui::TextUnformatted("Name");
+        ImGui::PopStyleColor();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::ColorConvertU32ToFloat4(th.card));
+        ImGui::InputText("##profile_name", name, sizeof name);
+        ImGui::PopStyleColor();
+        ImGui::EndGroup();
+    }
+
+    ImGui::Dummy({0, 10 * k});
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text_dim));
+    const char* icon_label = "None";
+    std::string icon_short;
+    if (icon[0]) {
+        if (std::strncmp(icon, "builtin:", 8) == 0) {
+            int bi = std::atoi(icon + 8);
+            icon_label = (bi >= 0 && bi < 6) ? builtin_names[bi] : icon;
+        } else {
+            icon_short = fs::path(u8(icon)).filename().string();
+            icon_label = icon_short.empty() ? icon : icon_short.c_str();
+        }
+    }
+    ImGui::Text("Custom image: %s", icon_label);
+    ImGui::PopStyleColor();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(th.card));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(ui::mix(th.card, th.accent, 0.25f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(th.card));
+    if (ImGui::Button("Choose image...", {210 * k, 40 * k}))
+        plat::pick_image([](std::string path) {
+            std::lock_guard lk(image_lock);
+            picked_image = std::move(path);
+        });
+    ImGui::SameLine(0, 12 * k);
+    if (ImGui::Button("No icon", {130 * k, 40 * k})) icon[0] = 0;
+    ImGui::PopStyleColor(3);
+
+    ImGui::Dummy({0, 10 * k});
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text_dim));
+    ImGui::TextUnformatted("Original icons");
+    ImGui::PopStyleColor();
+
+    const float swatch_gap = 10 * k;
+    const float swatch_w = (ImGui::GetContentRegionAvail().x - swatch_gap * 2.0f) / 3.0f;
+    for (int i = 0; i < 6; ++i) {
+        if (i && i % 3) ImGui::SameLine(0, swatch_gap);
+        char expected[16];
+        std::snprintf(expected, sizeof expected, "builtin:%d", i);
+        const bool selected_icon = std::strcmp(icon, expected) == 0;
+        const ImVec4 c = builtin_colors[i];
+        ImGui::PushStyleColor(ImGuiCol_Button, {c.x * 0.35f, c.y * 0.35f, c.z * 0.35f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {c.x * 0.55f, c.y * 0.55f, c.z * 0.55f, 1.0f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, c);
+        ImGui::PushStyleColor(ImGuiCol_Border, selected_icon ? c : ImVec4{c.x, c.y, c.z, 0.45f});
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, selected_icon ? 2.0f : 1.0f);
+        if (ImGui::Button(builtin_names[i], {swatch_w, 40 * k})) std::snprintf(icon, sizeof icon, "builtin:%d", i);
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+    }
+
+    ImGui::Dummy({0, 8 * k});
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text_off));
+    ImGui::SetWindowFontScale(0.88f);
+    ImGui::TextWrapped("Images are cropped to a square and converted to 256x256 JPEG.");
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+
+    // Footer: message + primary actions
+    ImGui::Dummy({0, 10 * k});
+    if (!message.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.accent2));
+        ImGui::TextWrapped("%s", message.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Dummy({0, 6 * k});
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {20 * k, 10 * k});
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(th.accent));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(th.accent2));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(th.accent));
+    if (ImGui::Button("Use this profile", {0, 44 * k})) {
+        auto next = db;
+        next.selected = size_t(edited);
+        if (profiles::save(root, next)) db = std::move(next), message = "Selected for the next launch.";
+        else message = "Could not save profiles.";
+    }
+    ImGui::PopStyleColor(3);
+    ImGui::SameLine(0, 12 * k);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(th.panel));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.25f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(th.panel));
+    if (ImGui::Button("Save changes", {0, 44 * k}) && valid()) {
+        auto next = db;
+        next.users[edited].name = name;
+        if (!set_icon(next.users[edited])) { ImGui::PopStyleColor(3); ImGui::PopStyleVar(); end_profiles_modal(); return; }
+        if (profiles::save(root, next)) db = std::move(next), message = "Profile saved.";
+        else message = "Could not save profiles.";
+    }
+    ImGui::SameLine(0, 12 * k);
+    if (ImGui::Button("Close", {0, 44 * k})) ImGui::CloseCurrentPopup();
+    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar();
+
+    // Copy saves sub-modal
+    ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f}, ImGuiCond_Appearing, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({std::min(io.DisplaySize.x * 0.80f, 520 * k), 0}, ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("##copy_saves_modal", nullptr,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::PushFont(ui::title());
+        ImGui::SetWindowFontScale(0.60f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text));
+        ImGui::TextUnformatted("Copy saves");
+        ImGui::PopStyleColor();
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::PopFont();
+        ImGui::Dummy({0, 6 * k});
         auto choose = [&](const char* label, int& value) {
             if (ImGui::BeginCombo(label, db.users[value].name.c_str())) {
                 for (int i = 0; i < int(db.users.size()); ++i) {
@@ -1058,9 +1313,16 @@ void profile_dialog(bool open) {
         };
         choose("From", copy_from);
         choose("To", copy_to);
+        ImGui::Dummy({0, 4 * k});
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(th.text_dim));
         ImGui::TextWrapped("Close any running game before copying. The destination's existing save will be backed up.");
+        ImGui::PopStyleColor();
+        ImGui::Dummy({0, 10 * k});
         if (copy_from == copy_to) ImGui::BeginDisabled();
-        if (ImGui::Button("Confirm copy")) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(th.accent));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(th.accent2));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(th.accent));
+        if (ImGui::Button("Confirm copy", {0, 40 * k})) {
             fs::path backup;
             std::string error;
             if (profiles::copy_save(root, db.users[copy_from], db.users[copy_to], backup, error)) {
@@ -1069,15 +1331,17 @@ void profile_dialog(bool open) {
                 ImGui::CloseCurrentPopup();
             } else message = error;
         }
+        ImGui::PopStyleColor(3);
         if (copy_from == copy_to) ImGui::EndDisabled();
-        if (!message.empty()) ImGui::TextWrapped("%s", message.c_str());
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::SameLine(0, 10 * k);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(th.panel));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(ui::mix(th.panel, th.accent, 0.25f)));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::ColorConvertU32ToFloat4(th.panel));
+        if (ImGui::Button("Cancel", {0, 40 * k})) ImGui::CloseCurrentPopup();
+        ImGui::PopStyleColor(3);
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
+    end_profiles_modal();
 }
 
 void page_settings() {
