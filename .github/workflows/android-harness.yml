@@ -42,12 +42,12 @@ jobs:
           for a in "$@"; do
             case "$a" in
               -c|--version) has_c=1; args+=("$a") ;;
-              -pie|-Wl,-pie|-rdynamic|-Wl,--export-dynamic|-Wl,-Bdynamic|-fuse-ld=*) ;;
+              -pie|-Wl,-pie|-rdynamic|-Wl,--export-dynamic|-Wl,-Bdynamic|-fuse-ld=*|-Wl,--gc-sections|--gc-sections) ;;
               *) args+=("$a") ;;
             esac
           done
           if [ "$has_c" -eq 0 ]; then
-            exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static -Wl,-z,nostart-stop-gc -L/tmp/zlib-out "${args[@]}"
+            exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static -L/tmp/zlib-out "${args[@]}"
           else
             exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl "${args[@]}"
           fi
