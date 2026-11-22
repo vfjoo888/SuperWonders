@@ -658,8 +658,10 @@ static void apply_loaded_pc_settings(const PcMenuState& state) {
     nx::nvn::set_anisotropy(state.anisotropy);
     nx::nvn::set_vsync(state.vsync);
     nx::nvn::set_frame_cap(state.frame_cap);
-    const uint32_t nw = uint32_t(GetSystemMetrics(SM_CXSCREEN));
-    const uint32_t nh = uint32_t(GetSystemMetrics(SM_CYSCREEN));
+    const uint32_t nw = !state.fullscreen && state.width >= 640 ? uint32_t(state.width)
+                                                               : uint32_t(GetSystemMetrics(SM_CXSCREEN));
+    const uint32_t nh = !state.fullscreen && state.height >= 360 ? uint32_t(state.height)
+                                                                : uint32_t(GetSystemMetrics(SM_CYSCREEN));
     nx::set_native_render_size(nw, nh);
 }
 

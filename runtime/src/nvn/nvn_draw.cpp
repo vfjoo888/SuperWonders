@@ -1048,23 +1048,24 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     vp.y += vp.height, vp.height = -vp.height;
     VkRect2D sc{{0, 0}, g_pass_extent};
     if (g_state.has_scissor) {
-        int32_t x = int32_t(std::lround(g_state.scissor[0] * scale));
-        int32_t y = int32_t(std::lround(g_state.scissor[1] * scale));
-        uint32_t w = uint32_t(std::max(0l, std::lround(g_state.scissor[2] * scale)));
-        uint32_t h = uint32_t(std::max(0l, std::lround(g_state.scissor[3] * scale)));
-        if (viewport_image && viewport_image->uw) {
-            const bool settings_text = flags.settings &&
-                vs && vs->hash == "a106c763cf05f818" && fs && fs->hash == "46841c209865a1c0" &&
-                g_state.scissor[0] >= 1100 && g_state.scissor[0] <= 1200 &&
-                g_state.scissor[2] >= 500 && g_state.scissor[2] <= 530 &&
-                g_state.scissor[3] >= 30 && g_state.scissor[3] <= 65;
-            if (settings_text) {
-                x += int32_t(std::lround((uw_factor() - 1.0f) * 960.0f * scale));
-            } else {
-                x = int32_t(std::lround(float(x) * uw_factor()));
-                w = uint32_t(std::lround(float(w) * uw_factor()));
-            }
+        const bool uw_vp = viewport_image && viewport_image->uw;
+        const bool settings_text = uw_vp && flags.settings &&
+            vs && vs->hash == "a106c763cf05f818" && fs && fs->hash == "46841c209865a1c0" &&
+            g_state.scissor[0] >= 1100 && g_state.scissor[0] <= 1200 &&
+            g_state.scissor[2] >= 500 && g_state.scissor[2] <= 530 &&
+            g_state.scissor[3] >= 30 && g_state.scissor[3] <= 65;
+        const float sx = (uw_vp && !settings_text) ? (scale * uw_factor()) : scale;
+        int32_t x = int32_t(std::lround(double(g_state.scissor[0]) * double(sx)));
+        int32_t x1 = int32_t(std::lround(double(g_state.scissor[0] + g_state.scissor[2]) * double(sx)));
+        int32_t y = int32_t(std::lround(double(g_state.scissor[1]) * double(scale)));
+        int32_t y1 = int32_t(std::lround(double(g_state.scissor[1] + g_state.scissor[3]) * double(scale)));
+        if (settings_text) {
+            const int32_t off = int32_t(std::lround((uw_factor() - 1.0f) * 960.0f * scale));
+            x += off;
+            x1 += off;
         }
+        uint32_t w = uint32_t(std::max<int32_t>(0, x1 - x));
+        uint32_t h = uint32_t(std::max<int32_t>(0, y1 - y));
         sc = {{std::max(0, x), std::max(0, y)}, {w, h}};
     }
     set_dynamic(cb, vp, sc);
