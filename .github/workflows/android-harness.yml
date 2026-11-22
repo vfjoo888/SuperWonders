@@ -32,11 +32,8 @@ jobs:
           curl -fsSL https://zlib.net/fossils/zlib-1.3.1.tar.gz | tar -xz -C /tmp
           mkdir -p /tmp/zlib-out /tmp/zig-wrap
           ZIG=/tmp/zig-linux-x86_64-0.14.0/zig
-          for f in /tmp/zlib-1.3.1/*.c; do
-            case "$f" in *example*|*minigzip*) continue ;; esac
-            "$ZIG" cc -target aarch64-linux-musl -O2 -c "$f" -o "/tmp/zlib-out/$(basename "$f" .c).o"
-          done
-          "$ZIG" ar rcs /tmp/zlib-out/libz.a /tmp/zlib-out/*.o
+          (cd /tmp/zlib-1.3.1 && CC="$ZIG cc -target aarch64-linux-musl -O2" AR="$ZIG ar" RANLIB="$ZIG ranlib" ./configure --static && make -j4 libz.a)
+          cp /tmp/zlib-1.3.1/libz.a /tmp/zlib-out/libz.a
 
           cat << 'EOF' > /tmp/zig-wrap/clang
           #!/bin/bash
