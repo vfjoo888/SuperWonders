@@ -59,6 +59,11 @@ void pick_folder(const std::string& title, const std::string& start, std::functi
 void pick_image(const std::function<void(std::string)>& done);
 void open_folder(const std::string& path);  // shows it in the system's file manager (an http(s) address: the browser)
 std::vector<std::string> program_args();     // the command line, without the program's own path
+#if defined(__ANDROID__)
+const char* android_internal_data_dir();
+const char* android_native_lib_dir();
+bool ensure_android_kit();
+#endif
 
 // ---- display, input, audio ----
 void* create_window();       // native window handle for the Vulkan surface (HWND / ANativeWindow*), kept alive

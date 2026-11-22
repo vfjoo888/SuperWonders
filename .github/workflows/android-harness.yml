@@ -25,26 +25,31 @@ jobs:
           curl -fsSL https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz \
             | tar -xz -C private/third_party/ryubing --strip-components=1
 
-      - name: Setup NDK clang wrapper for linux-bionic-arm64 NativeAOT
+      - name: Setup Zig 0.14.0 (static aarch64-linux-musl linker)
         run: |
-          NDK_BIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          if [ ! -d "$NDK_BIN" ]; then
-            NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          fi
-          mkdir -p /tmp/ndk-wrap
-          printf '#!/bin/sh\nexec "%s/aarch64-linux-android29-clang" "$@"\n' "$NDK_BIN" > /tmp/ndk-wrap/clang
-          printf '#!/bin/sh\nexec "%s/llvm-objcopy" "$@"\n' "$NDK_BIN" > /tmp/ndk-wrap/objcopy
-          chmod +x /tmp/ndk-wrap/clang /tmp/ndk-wrap/objcopy
-          echo "/tmp/ndk-wrap" >> "$GITHUB_PATH"
+          curl -fsSL https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz \
+            | tar -xJ -C /tmp
+          mkdir -p /tmp/zig-wrap
+          cat << 'EOF' > /tmp/zig-wrap/clang
+          #!/bin/sh
+          exec /tmp/zig-linux-x86_64-0.14.0/zig cc -target aarch64-linux-musl -static "$@"
+          EOF
+          cat << 'EOF' > /tmp/zig-wrap/objcopy
+          #!/bin/sh
+          exec /tmp/zig-linux-x86_64-0.14.0/zig objcopy "$@"
+          EOF
+          chmod +x /tmp/zig-wrap/clang /tmp/zig-wrap/objcopy
+          echo "/tmp/zig-wrap" >> "$GITHUB_PATH"
 
-      - name: Publish spirv_harness NativeAOT (linux-bionic-arm64)
+      - name: Publish spirv_harness NativeAOT (static linux-musl-arm64)
         run: |
           dotnet publish tools/maxwell/spirv_harness/SpirvHarness.csproj \
             -c Release \
-            -r linux-bionic-arm64 \
+            -r linux-musl-arm64 \
             -p:PublishAot=true \
             -p:StripSymbols=true \
             -o out/spirv_harness
+          file out/spirv_harness/spirv_harness
           ls -lh out/spirv_harness/spirv_harness
 
       - name: Upload artifact

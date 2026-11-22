@@ -34,6 +34,15 @@ Pop-Location
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $apk = [System.IO.Compression.ZipFile]::Open("$out\base.apk", "Update")
 [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, "$out\lib\arm64-v8a\lib$Game.so", "lib/arm64-v8a/lib$Game.so", "Optimal") | Out-Null
+$kitBundle = "$root\private\android-kit\bundle"
+if (Test-Path "$kitBundle\lib_arm64") {
+    foreach ($so in Get-ChildItem "$kitBundle\lib_arm64\*.so") {
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, $so.FullName, "lib/arm64-v8a/$($so.Name)", "Optimal") | Out-Null
+    }
+}
+if (Test-Path "$kitBundle\assets\game-build.tar.gz") {
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, "$kitBundle\assets\game-build.tar.gz", "assets/game-build.tar.gz", "NoCompression") | Out-Null
+}
 # Java of the game's own (games\<game>\java, e.g. Wonder's home screen): javac against android.jar, d8 to classes.dex.
 $java = "$root\games\$Game\java"
 if (Test-Path $java) {

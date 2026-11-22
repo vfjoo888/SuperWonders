@@ -376,7 +376,7 @@ if(ANDROID)
     # Our ANativeActivity_onCreate (platform_android.cpp) runs first, on the UI thread, then calls the glue's.
     set_source_files_properties("${GLUE}/android_native_app_glue.c" PROPERTIES
         COMPILE_DEFINITIONS "ANativeActivity_onCreate=glue_ANativeActivity_onCreate")
-    target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_MODULES} android log aaudio)
+    target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_MODULES} android log aaudio z)
     target_compile_options(${NX_GAME} PRIVATE -fvisibility=hidden -fno-semantic-interposition -march=armv8.2-a+crypto)
     # The glue's ANativeActivity_onCreate must be exported. 16 KB page alignment: Android 15+ devices with 16 KB pages.
     target_link_options(${NX_GAME} PRIVATE -u ANativeActivity_onCreate -Wl,-z,max-page-size=16384)

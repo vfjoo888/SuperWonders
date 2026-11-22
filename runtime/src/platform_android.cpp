@@ -7,7 +7,9 @@
 //   <files>/user/...                  saves
 //   <files>/config.txt                optional: resolution=WxH
 #include <aaudio/AAudio.h>
+#include <android/asset_manager.h>
 #include <android/log.h>
+#include <zlib.h>
 #include <android/native_window.h>
 #include <android/window.h>
 #include <android_native_app_glue.h>
@@ -284,6 +286,112 @@ std::vector<std::string> program_args() { return {}; }
 const char* android_internal_data_dir() {
     return g_app && g_app->activity && g_app->activity->internalDataPath ? g_app->activity->internalDataPath : "";
 }
+std::string g_native_lib_dir;
+const char* android_native_lib_dir() { return g_native_lib_dir.c_str(); }
+
+bool ensure_android_kit() {
+    const char* idir = android_internal_data_dir();
+    if (!idir || !*idir || !g_app || !g_app->activity || !g_app->activity->assetManager) return false;
+    const std::string kit_dir = std::string(idir) + "/game-build";
+    const std::string setup_py = kit_dir + "/setup_game.py";
+    if (access(setup_py.c_str(), R_OK) == 0) return true;  // already extracted
+
+    AAsset* asset = AAssetManager_open(g_app->activity->assetManager, "game-build.tar.gz", AASSET_MODE_STREAMING);
+    if (!asset) {
+        nx::log("kit: no game-build.tar.gz asset in APK");
+        return false;
+    }
+    nx::log("kit: extracting game-build.tar.gz to %s", kit_dir.c_str());
+    make_dirs(kit_dir);
+
+    z_stream zs{};
+    if (inflateInit2(&zs, 16 + MAX_WBITS) != Z_OK) {
+        AAsset_close(asset);
+        return false;
+    }
+    std::vector<uint8_t> in_buf(65536), out_buf(262144), tar_stream;
+    for (;;) {
+        int n = AAsset_read(asset, in_buf.data(), in_buf.size());
+        if (n <= 0) break;
+        zs.next_in = in_buf.data();
+        zs.avail_in = uInt(n);
+        do {
+            zs.next_out = out_buf.data();
+            zs.avail_out = uInt(out_buf.size());
+            int zr = inflate(&zs, Z_NO_FLUSH);
+            if (zr == Z_STREAM_ERROR || zr == Z_DATA_ERROR || zr == Z_MEM_ERROR) {
+                inflateEnd(&zs);
+                AAsset_close(asset);
+                return false;
+            }
+            size_t have = out_buf.size() - zs.avail_out;
+            tar_stream.insert(tar_stream.end(), out_buf.data(), out_buf.data() + have);
+        } while (zs.avail_out == 0);
+    }
+    inflateEnd(&zs);
+    AAsset_close(asset);
+
+    // Parse GNU tar blocks.
+    size_t pos = 0;
+    std::string long_name;
+    while (pos + 512 <= tar_stream.size()) {
+        const uint8_t* hdr = tar_stream.data() + pos;
+        pos += 512;
+        bool zero = true;
+        for (int i = 0; i < 512; ++i)
+            if (hdr[i]) { zero = false; break; }
+        if (zero) break;
+        uint64_t fsize = 0;
+        for (int i = 124; i < 136 && hdr[i] >= '0' && hdr[i] <= '7'; ++i) fsize = (fsize << 3) | uint64_t(hdr[i] - '0');
+        char type = char(hdr[156]);
+        std::string name;
+        if (!long_name.empty()) {
+            name = std::move(long_name);
+            long_name.clear();
+        } else {
+            char nb[257]{};
+            if (hdr[345]) {
+                std::snprintf(nb, sizeof nb, "%.*s/%.*s", 155, reinterpret_cast<const char*>(hdr + 345),
+                              100, reinterpret_cast<const char*>(hdr));
+            } else {
+                std::snprintf(nb, sizeof nb, "%.*s", 100, reinterpret_cast<const char*>(hdr));
+            }
+            name = nb;
+        }
+        if (type == 'L') {
+            if (pos + fsize <= tar_stream.size()) {
+                long_name.assign(reinterpret_cast<const char*>(tar_stream.data() + pos), size_t(fsize));
+                while (!long_name.empty() && long_name.back() == '\0') long_name.pop_back();
+            }
+        } else if ((type == '0' || type == '\0') && !name.empty() && name.find("..") == std::string::npos) {
+            if (pos + fsize <= tar_stream.size()) {
+                std::filesystem::path out_p = std::filesystem::path(kit_dir) / name;
+                std::error_code ec;
+                std::filesystem::create_directories(out_p.parent_path(), ec);
+                if (FILE* fp = std::fopen(out_p.c_str(), "wb")) {
+                    if (fsize) std::fwrite(tar_stream.data() + pos, 1, size_t(fsize), fp);
+                    std::fclose(fp);
+                }
+            }
+        } else if (type == '5' && !name.empty() && name.find("..") == std::string::npos) {
+            make_dirs(kit_dir + "/" + name);
+        }
+        pos += size_t((fsize + 511) & ~511ull);
+    }
+
+    // Write libc.txt for Zig on-device C++ compilation.
+    if (FILE* fp = std::fopen((kit_dir + "/libc.txt").c_str(), "w")) {
+        std::fprintf(fp,
+                     "include_dir=%s/sysroot/usr/include\n"
+                     "sys_include_dir=%s/sysroot/usr/include/aarch64-linux-android\n"
+                     "crt_dir=%s/sysroot/usr/lib/aarch64-linux-android/29\n"
+                     "msvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n",
+                     kit_dir.c_str(), kit_dir.c_str(), kit_dir.c_str());
+        std::fclose(fp);
+    }
+    nx::log("kit: extracted game-build successfully");
+    return access(setup_py.c_str(), R_OK) == 0;
+}
 std::string android_settings_path() { return g_root + "/pc-settings.ini"; }
 
 void apply_android_settings(const overlay::Settings& s, bool persist) {
@@ -558,6 +666,25 @@ void request_immersive() {
 
 extern "C" JNIEXPORT void ANativeActivity_onCreate(ANativeActivity* activity, void* saved, size_t size) {
     g_activity = activity;
+    if (JNIEnv* env = activity->env) {
+        jclass act_cls = env->GetObjectClass(activity->clazz);
+        jobject app_info = env->CallObjectMethod(
+            activity->clazz, env->GetMethodID(act_cls, "getApplicationInfo", "()Landroid/content/pm/ApplicationInfo;"));
+        if (app_info) {
+            jclass ai_cls = env->GetObjectClass(app_info);
+            auto jdir = static_cast<jstring>(
+                env->GetObjectField(app_info, env->GetFieldID(ai_cls, "nativeLibraryDir", "Ljava/lang/String;")));
+            if (jdir) {
+                if (const char* chars = env->GetStringUTFChars(jdir, nullptr)) {
+                    nx::plat::g_native_lib_dir = chars;
+                    env->ReleaseStringUTFChars(jdir, chars);
+                }
+                env->DeleteLocalRef(jdir);
+            }
+            env->DeleteLocalRef(app_info);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
     if (g_ui_pipe[0] < 0 && pipe2(g_ui_pipe, O_NONBLOCK | O_CLOEXEC) == 0)
         ALooper_addFd(ALooper_forThread(), g_ui_pipe[0], ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, on_ui_request, nullptr);
     glue_ANativeActivity_onCreate(activity, saved, size);

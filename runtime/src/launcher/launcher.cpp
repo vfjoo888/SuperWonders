@@ -112,6 +112,32 @@ struct Kit {
 
 Kit find_kit() {
     Kit k;
+#if defined(__ANDROID__)
+    if (plat::ensure_android_kit()) {
+        const std::string idir = plat::android_internal_data_dir();
+        const std::string ndir = plat::android_native_lib_dir();
+        const fs::path kit = u8(idir) / "game-build";
+        const fs::path py = u8(ndir) / "libpy3.so";
+        if (file(kit / "setup_game.py") && file(py)) {
+            k.script = str(kit / "setup_game.py");
+            k.python = str(py);
+            std::ifstream f(kit / "kit-id.txt");
+            std::getline(f, k.id);
+            const std::string kit_s = str(kit);
+            setenv("PYTHONHOME", (kit_s + "/python").c_str(), 1);
+            setenv("PYTHONPATH", (kit_s + "/python/lib/python3.14/site-packages").c_str(), 1);
+            setenv("LD_LIBRARY_PATH", (kit_s + "/lib:" + ndir).c_str(), 1);
+            setenv("NX_ZIG_BIN", (ndir + "/libzig.so").c_str(), 1);
+            setenv("ZIG_LIB_DIR", (kit_s + "/ziglib").c_str(), 1);
+            setenv("ZIG_LIBC", (kit_s + "/libc.txt").c_str(), 1);
+            setenv("ZIG_GLOBAL_CACHE_DIR", (idir + "/zig-cache").c_str(), 1);
+            setenv("ZIG_LOCAL_CACHE_DIR", (idir + "/zig-cache").c_str(), 1);
+            setenv("NX_SPIRV_HARNESS", (ndir + "/libspirv_harness.so").c_str(), 1);
+            setenv("HOME", idir.c_str(), 1);
+        }
+    }
+    return k;
+#endif
     const fs::path kit = u8(program_dir()) / "game-build";
 #if defined(_WIN32)
     const fs::path py = kit / "python" / "python.exe";
@@ -879,25 +905,6 @@ void page_files() {
     if (rows::action(lt(LtOutputFolder), out_val.c_str(), out_desc.c_str(), true, g->status.ready == Ready::Yes))
         browse_open(3);
 
-#if defined(__ANDROID__)
-    const bool ready = g->status.ready == Ready::Yes;
-    const std::string ver_val =
-        ready ? (g->status.installed_version.empty() ? "Ready" : g->status.installed_version + " (Ready)") : "Not ready";
-    const std::string ver_desc =
-        ready ? ("Game data is ready in:\n" + cur_out +
-                 "\n\nTo rebuild from your own Switch dump, run tools/gamebuild.py --android-ndk on a PC and copy "
-                 "game/libwonder_game.so, analysis/, extract/romfs/ and spirv/ here.")
-              : (g->status.why +
-                 "\n\nPrepare the Android data pack on a PC with tools/gamebuild.py --android-ndk from your own "
-                 "ExeFS/RomFS dump, then copy it into:\n" +
-                 cur_out);
-    rows::action(lt(LtGameVersion), ver_val.c_str(), ver_desc.c_str(), false, ready);
-    if (rows::action("Recheck", "", "Scan the selected folder again after copying files.", true)) refresh_status();
-    rows::section(lt(LtSetUp));
-    if (ready && rows::action(lt(LtPlay), lt(LtStart), "Start Super Mario Bros. Wonder.", true, true)) g->play = true;
-    rows::end();
-}
-#else
     const std::string exefs = g->config.exefs.empty() ? lt(LtChoose) : fit_path(g->config.exefs, lt(LtExeFS));
     std::string exefs_desc =
         "The ExeFS folder of your own copy of the game (versions 1.0.0 and 1.2.1 supported). It holds main and sdk.";
@@ -959,12 +966,13 @@ void page_files() {
     if (!pair_ok) rows::disable_next();
     if (rows::action(ready ? lt(LtSetUpAgain) : lt(LtSetUpGameFiles), "", why.c_str(), true, pair_ok && !ready))
         start_setup();
+#if !defined(__ANDROID__)
     if (rows::action(lt(LtOpenDataFolder), "",
                      ("Open the active output folder in your file manager:\n" + cur_out).c_str(), true))
         plat::open_folder(cur_out);
+#endif
     rows::end();
 }
-#endif
 
 // The active profile is chosen before boot. The legacy UID keeps the existing save path.
 void profile_dialog(bool open) {
