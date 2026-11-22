@@ -42,8 +42,11 @@
 #include <nx/runtime.h>
 
 #include "kernel.h"
+#include "nvn/nvn_vk.h"
+#include "overlay/overlay.h"
 #include "platform.h"
 #include "platform_android.h"
+#include "svc_am.h"
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -263,8 +266,48 @@ void log_line(const char* line) { __android_log_write(ANDROID_LOG_INFO, nx::game
 
 std::string default_data_root() { return g_root; }
 std::string data_root() { return g_root; }
-bool set_data_root(const std::string&) { return false; }
-void reload_pc_settings() {}
+bool set_data_root(const std::string& path) {
+    if (path.empty()) return false;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(path, ec)) return false;
+    g_root = path;
+    if (g_app && g_app->activity && g_app->activity->internalDataPath) {
+        std::ofstream f(std::string(g_app->activity->internalDataPath) + "/data_root.txt", std::ios::trunc);
+        if (f) f << path << "\n";
+    }
+    return true;
+}
+void pick_folder(const std::string&, const std::string&, std::function<void(std::string)>) {}
+void pick_image(const std::function<void(std::string)>&) {}
+void open_folder(const std::string&) {}
+std::vector<std::string> program_args() { return {}; }
+const char* android_internal_data_dir() {
+    return g_app && g_app->activity && g_app->activity->internalDataPath ? g_app->activity->internalDataPath : "";
+}
+std::string android_settings_path() { return g_root + "/pc-settings.ini"; }
+
+void apply_android_settings(const overlay::Settings& s, bool persist) {
+    nx::set_audio_output(s.audio_mode, s.stereo_separation);
+    nx::set_internal_resolution_preset(s.internal_resolution);
+    nx::set_game_language(s.game_language);
+    nvn::set_fsr(s.upscaler == 1, float(s.fsr_sharpness) / 100.0f);
+    nvn::set_fxaa(s.antialiasing == 1);
+    nvn::set_anisotropy(s.anisotropy);
+    nvn::set_vsync(s.vsync);
+    nvn::set_frame_cap(s.frame_cap);
+    if (persist) {
+        make_dirs(g_root);
+        overlay::save_settings(android_settings_path(), s);
+    }
+}
+
+void reload_pc_settings() {
+    overlay::Settings s;
+    if (overlay::load_settings(android_settings_path(), s)) {
+        apply_android_settings(s, false);
+        overlay::sync(s);
+    }
+}
 
 std::string setting(const std::string& key) {
     std::ifstream f(g_root + "/config.txt");
@@ -297,9 +340,9 @@ ANativeWindow* android_window() { return g_window.load(); }  // platform_android
 bool window_minimized() { return !g_visible || !g_window; }
 
 void shader_compile_progress(uint64_t, uint64_t, bool) {}
-void overlay_game_interval(int) {}
-void overlay_game_speed(double) {}
-void overlay_presented(uint64_t) {}
+void overlay_game_interval(int interval) { overlay::game_interval(interval); }
+void overlay_game_speed(double percent) { overlay::game_speed(percent); }
+void overlay_presented(uint64_t now_ns) { overlay::presented(now_ns); }
 
 void screen_size(uint32_t& w, uint32_t& h) {
     ANativeWindow* win = static_cast<ANativeWindow*>(create_window());
@@ -596,6 +639,15 @@ extern "C" void android_main(android_app* app) {
     }
     start_memory_guard();
     gpu_turbo();
+    {
+        nx::overlay::Settings s;
+        const bool found = nx::overlay::load_settings(android_settings_path(), s);
+        apply_android_settings(s, false);
+        nx::overlay::Host host;
+        host.apply = apply_android_settings;
+        nx::overlay::init(host, s);
+        nx::log("platform: settings %s (%s)", found ? "loaded" : "defaults", android_settings_path().c_str());
+    }
     app->onAppCmd = on_cmd;
     app->onInputEvent = on_input;
     // NX_SHOW_WHEN_LOCKED=1 (unattended test runs, tools/wonder_phone_course.sh): shown over the lock screen and turning

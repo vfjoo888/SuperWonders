@@ -60,7 +60,7 @@ EXIT_NEEDS_BUILD = 10
 class Kit:
     """Where the recompiler, headers, entry file and compiler are: a release's game-build/ folder, or a checkout."""
 
-    def __init__(self):
+    def __init__(self, android_ndk=None):
         if os.path.isdir(os.path.join(HERE, "recomp")):  # a release: game-build/{recomp,include,gamelib_entry.cpp}
             self.root = HERE
             self.include = os.path.join(HERE, "include")
@@ -70,16 +70,32 @@ class Kit:
             self.include = os.path.join(self.root, "runtime", "include")
             self.entry = os.path.join(self.root, "runtime", "src", "gamelib_entry.cpp")
         self.recomp = os.path.join(self.root, "recomp")
-        self.cxx = self.find_compiler()
-        # Linux release (the AppImage): the kit's own clang builds against the kit's sysroot (glibc and libstdc++ of the
-        # build container, Ubuntu 22.04: tools/linux/package.sh), so it needs nothing installed; the library then uses
-        # the system's libstdc++ at run time, as the program does.
-        self.sysroot = os.path.join(HERE, "toolchain", "sysroot")
-        extra = []
-        if not WIN and os.path.isdir(self.sysroot) and self.cxx and self.cxx.startswith(os.path.join(HERE, "toolchain")):
-            extra = [f"--sysroot={self.sysroot}", f"--gcc-toolchain={self.sysroot}/usr"]
-        self.cxxflags = CXXFLAGS + extra
-        self.ldflags = LDFLAGS + extra + (["-fuse-ld=lld"] if extra else [])
+        self.android_ndk = android_ndk or os.environ.get("NX_ANDROID_NDK")
+        self.zig_bin = os.environ.get("NX_ZIG_BIN")
+        self.lib_name = f"lib{GAME}_game.so" if (self.android_ndk or self.zig_bin) else LIB
+        if self.zig_bin:
+            self.cxx = self.zig_bin
+            self.cxxflags = ["c++", "-target", "aarch64-linux-android.29", "-O2", "-DNDEBUG", "-std=gnu++20", *WARN,
+                             "-fPIC", "-fvisibility=hidden", "-fno-semantic-interposition", "-DANDROID"]
+            self.ldflags = ["c++", "-target", "aarch64-linux-android.29", "-shared", "-Wl,-Bsymbolic",
+                            "-Wl,--no-undefined", "-Wl,-z,max-page-size=16384"]
+        elif self.android_ndk:
+            tag = "windows-x86_64" if WIN else "linux-x86_64"
+            suffix = ".cmd" if WIN else ""
+            self.cxx = os.path.join(self.android_ndk, "toolchains", "llvm", "prebuilt", tag, "bin",
+                                    f"aarch64-linux-android29-clang++{suffix}")
+            self.cxxflags = ["-O3", "-DNDEBUG", "-std=gnu++20", *WARN, "-march=armv8.2-a+crypto",
+                             "-fPIC", "-fvisibility=hidden", "-fno-semantic-interposition", "-DANDROID"]
+            self.ldflags = ["-shared", "-static-libstdc++", "-Wl,-Bsymbolic", "-Wl,--no-undefined",
+                            "-Wl,-z,max-page-size=16384"]
+        else:
+            self.cxx = self.find_compiler()
+            self.sysroot = os.path.join(HERE, "toolchain", "sysroot")
+            extra = []
+            if not WIN and os.path.isdir(self.sysroot) and self.cxx and self.cxx.startswith(os.path.join(HERE, "toolchain")):
+                extra = [f"--sysroot={self.sysroot}", f"--gcc-toolchain={self.sysroot}/usr"]
+            self.cxxflags = CXXFLAGS + extra
+            self.ldflags = LDFLAGS + extra + (["-fuse-ld=lld"] if extra else [])
 
     def find_compiler(self):
         exe = "clang++.exe" if WIN else "clang++"
@@ -112,9 +128,9 @@ class Kit:
             h.update(os.path.basename(f).encode() + b"\0")
             with open(f, "rb") as fh:
                 h.update(fh.read().replace(b"\r\n", b"\n"))  # (a checkout's line endings don't count)
-        h.update(" ".join(CXXFLAGS + ["|"] + LDFLAGS).encode())  # (not the sysroot's path: where the kit is doesn't matter)
+        h.update(" ".join(self.cxxflags + ["|"] + self.ldflags).encode())  # (not the sysroot's path: where the kit is doesn't matter)
         h.update(self.compiler_version().encode())
-        h.update(LIB.encode())
+        h.update(self.lib_name.encode())
         return h.hexdigest()[:32]
 
 
@@ -347,29 +363,29 @@ def compile_all(kit, gen, obj, jobs, done_before, share):
 
 
 def link(kit, objs, game_dir, work):
-    tmp = os.path.join(work, LIB)
+    tmp = os.path.join(work, kit.lib_name)
     rsp = os.path.join(work, "objects.rsp")
     with open(rsp, "w") as f:
         for o in objs:
             f.write('"' + o.replace("\\", "/") + '"\n')
     cmd = [kit.cxx, *kit.ldflags, "-o", tmp, "@" + rsp]
-    if WIN:
+    if WIN and not kit.android_ndk:
         cmd.append("-Wl,-Map," + os.path.join(work, f"{GAME}_game.map").replace("\\", "/"))
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         sys.stderr.write(r.stderr[-4000:])
         raise SystemExit("error: linking the game code failed")
-    dest = os.path.join(game_dir, LIB)
+    dest = os.path.join(game_dir, kit.lib_name)
     try:
         os.replace(tmp, dest)
     except PermissionError:
         raise SystemExit(f"error: {dest} is in use: close the game first")
-    if WIN and os.path.isfile(os.path.join(work, f"{GAME}_game.map")):
+    if WIN and not kit.android_ndk and os.path.isfile(os.path.join(work, f"{GAME}_game.map")):
         os.replace(os.path.join(work, f"{GAME}_game.map"), os.path.join(game_dir, f"{GAME}_game.map"))
 
 
 def build(a):
-    kit = Kit()
+    kit = Kit(getattr(a, "android_ndk", None))
     if not kit.cxx:
         raise SystemExit("error: no C++ compiler (clang++) found: this build of SuperWonders is missing game-build/toolchain")
     exefs = os.path.abspath(a.exefs)
@@ -420,7 +436,7 @@ def build(a):
 
 
 def check(a):
-    kit = Kit()
+    kit = Kit(getattr(a, "android_ndk", None))
     exefs = os.path.abspath(a.exefs)
     check_exefs(exefs)
     game_dir = os.path.join(os.path.abspath(a.data_root or default_data_root()), "game")
@@ -436,6 +452,7 @@ def main():
         p = sub.add_parser(name)
         p.add_argument("--exefs", required=True, help="the ExeFS folder of your own copy (main, sdk)")
         p.add_argument("--data-root", help="where the game's data lives (default: NX_DATA_ROOT, or the release's data/)")
+        p.add_argument("--android-ndk", help="cross-compile libwonder_game.so for Android arm64-v8a using this NDK")
         if name == "build":
             p.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
             p.add_argument("--keep-work", action="store_true",

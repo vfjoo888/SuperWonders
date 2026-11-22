@@ -18,34 +18,28 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:label="Wonder"
+        android:label="SuperWonders"
+        android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true"
-        android:hasCode="true"
+        android:hasCode="false"
         android:extractNativeLibs="true"
         android:debuggable="true"
         android:isGame="true"
         android:appCategory="game"
         android:largeHeap="true"
         android:theme="@style/Fullscreen">
-        <!-- Home screen: finds or picks the data folder, then starts the game. -->
-        <activity
-            android:name=".Home"
-            android:exported="true"
-            android:theme="@android:style/Theme.Material.NoActionBar"
-            android:screenOrientation="sensorLandscape">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-        <!-- The game. Exported: test runs start it directly (adb shell am start -n .../android.app.NativeActivity). -->
         <activity
             android:name="android.app.NativeActivity"
+            android:label="SuperWonders"
             android:exported="true"
             android:screenOrientation="sensorLandscape"
             android:resizeableActivity="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
             <meta-data android:name="android.app.lib_name" android:value="wonder" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

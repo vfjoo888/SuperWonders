@@ -25,10 +25,15 @@ extern const nx::ModuleInfo nx_module_sdk;
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 namespace nx {
+
+#if defined(__ANDROID__)
+namespace plat { const char* android_internal_data_dir(); }
+#endif
 
 #if !NX_GAME_LIBRARY
 
@@ -112,24 +117,74 @@ NxGameLibBind open_library(const std::string& path, std::string& why, LibHandle*
     return bind;
 }
 
+#if defined(__ANDROID__)
+std::string stage_android_library(const std::string& src) {
+    const char* internal = plat::android_internal_data_dir();
+    if (!internal || !*internal) return src;
+    const std::string dst = std::string(internal) + "/" NX_GAMELIB_FILE;
+    struct stat st_src{}, st_dst{};
+    if (stat(src.c_str(), &st_src) != 0) return src;
+    if (stat(dst.c_str(), &st_dst) == 0 && st_dst.st_size == st_src.st_size && st_dst.st_mtime >= st_src.st_mtime)
+        return dst;
+    FILE* in = std::fopen(src.c_str(), "rb");
+    if (!in) return src;
+    const std::string tmp = dst + ".tmp";
+    FILE* out = std::fopen(tmp.c_str(), "wb");
+    if (!out) { std::fclose(in); return src; }
+    char buf[65536];
+    size_t n = 0;
+    bool ok = true;
+    while ((n = std::fread(buf, 1, sizeof buf, in)) > 0) {
+        if (std::fwrite(buf, 1, n, out) != n) { ok = false; break; }
+    }
+    std::fclose(in);
+    if (std::fflush(out) != 0) ok = false;
+    std::fclose(out);
+    if (!ok || std::rename(tmp.c_str(), dst.c_str()) != 0) return src;
+    return dst;
+}
+#endif
+
 std::vector<std::string> places() {
     std::vector<std::string> places;
     if (const char* p = std::getenv("NX_GAMELIB"); p && *p) places.push_back(p);
+#if defined(__ANDROID__)
+    places.push_back(NX_GAMELIB_FILE);  // nativeLibraryDir inside the APK if bundled
+    places.push_back(plat::data_root() + "/game/" NX_GAMELIB_FILE);
+#else
     places.push_back(program_dir() + "/" NX_GAMELIB_FILE);
     places.push_back(plat::data_root() + "/game/" NX_GAMELIB_FILE);
+#endif
     return places;
 }
 
 const GameLib* load() {
 
     std::string tried;
-    for (const std::string& path : places()) {
+    for (const std::string& candidate : places()) {
+        std::string path = candidate;
+#if defined(__ANDROID__)
+        if (path.find('/') != std::string::npos) {
+            if (!exists(path)) {
+                tried += "\n  " + path + ": not there";
+                continue;
+            }
+            path = stage_android_library(path);
+        }
+#else
         if (!exists(path)) {
             tried += "\n  " + path + ": not there";
             continue;
         }
+#endif
         std::string why;
         NxGameLibBind bind = open_library(path, why);
+#if defined(__ANDROID__)
+        if (!bind && path.find('/') == std::string::npos) {
+            tried += "\n  " + path + ": " + why;
+            continue;
+        }
+#endif
         if (!bind) fatal("The game code library %s can't be used: %s.", path.c_str(), why.c_str());
         static const GameLibHost host = {gamelib_layout(), &call, &unimpl, &svc, &mrs, &msr, &trace_sp};
         const GameLib* lib = bind(&host);

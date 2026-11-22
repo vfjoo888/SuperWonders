@@ -421,7 +421,7 @@ static void store_frame_step(float seconds) {
     std::memcpy(&bits, &ratio, sizeof ratio);
     std::memcpy(reinterpret_cast<uint8_t*>(&bits) + sizeof ratio, &seconds, sizeof seconds);
     auto* step = reinterpret_cast<uint64_t*>(static_cast<uintptr_t>(page));
-    std::atomic_ref<uint64_t>(*step).store(bits, std::memory_order_release);
+    __atomic_store_n(step, bits, __ATOMIC_RELEASE);
 }
 
 static void update_wide_aspect() {
@@ -439,7 +439,7 @@ static void update_wide_aspect() {
     if (!page) return;
     const float aspect = horplus ? float(width) / float(height) : (16.0f / 9.0f);
     auto* aspect_bits = reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(page + 8));
-    std::atomic_ref<uint32_t>(*aspect_bits).store(float_bits(aspect), std::memory_order_release);
+    __atomic_store_n(aspect_bits, float_bits(aspect), __ATOMIC_RELEASE);
     last_width = width;
     last_height = height;
     if (horplus)

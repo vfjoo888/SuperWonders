@@ -308,7 +308,11 @@ OutputInfo inspect_output_dir(const fs::path& dir, const std::string& gamelib_fi
     const fs::path local_lib = dir / "game" / path_u8(gamelib_filename);
     out.has_gamelib = is_file(local_lib) || (!fallback_gamelib_path.empty() && is_file(path_u8(fallback_gamelib_path)));
     out.has_analysis = is_file(dir / "analysis" / "main.bin") && is_file(dir / "analysis" / "sdk.bin");
+#if defined(__ANDROID__)
+    out.has_shaders = is_file(dir / "spirv" / "results.tsv");
+#else
     out.has_shaders = is_file(dir / "shader_programs.bin") && is_file(dir / "spirv" / "results.tsv");
+#endif
     out.has_romfs = is_dir(dir / "extract" / "romfs" / "Shader");
 
     out.installed_version = read_key(dir / "game" / "build-id.txt", "version");

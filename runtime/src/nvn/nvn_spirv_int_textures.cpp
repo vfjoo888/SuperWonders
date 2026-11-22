@@ -225,7 +225,7 @@ bool patch_int_textures(const std::vector<uint32_t>& in, const std::map<uint32_t
         return new_si[key] = id;
     };
     // Values derived from a patched variable: id -> (kind, float image type it came from).
-    std::map<uint32_t, std::pair<uint32_t, uint32_t>> si_value, image_value;
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> sampled_img_val, image_value;
     std::map<uint32_t, uint32_t> var_ptr;  // patched variable -> its new pointer type
     for (auto [var, kind] : var_kind) {
         for (const Inst& n : insts)
@@ -235,7 +235,7 @@ bool patch_int_textures(const std::vector<uint32_t>& in, const std::map<uint32_t
                 uint32_t p = bound++;
                 types.insert(types.end(), {(4u << 16) | OpTypePointer, p, StorageUniformConstant, si});
                 var_ptr[var] = p;
-                si_value[var] = {kind, float_image};  // the variable itself, as the pointer loads come from
+                sampled_img_val[var] = {kind, float_image};  // the variable itself, as the pointer loads come from
                 break;
             }
     }
@@ -254,21 +254,21 @@ bool patch_int_textures(const std::vector<uint32_t>& in, const std::map<uint32_t
         if (n.op == OpVariable && var_ptr.count(w[2])) {
             w[1] = var_ptr[w[2]];
         } else if (n.op == OpLoad && n.len >= 4 && var_ptr.count(w[3])) {
-            auto [kind, fi] = si_value[w[3]];
+            auto [kind, fi] = sampled_img_val[w[3]];
             w[1] = int_si(fi, kind);
-            si_value[w[2]] = {kind, fi};
-        } else if (n.op == OpImage && n.len >= 4 && si_value.count(w[3])) {
-            auto [kind, fi] = si_value[w[3]];
+            sampled_img_val[w[2]] = {kind, fi};
+        } else if (n.op == OpImage && n.len >= 4 && sampled_img_val.count(w[3])) {
+            auto [kind, fi] = sampled_img_val[w[3]];
             w[1] = int_image(fi, kind);
             image_value[w[2]] = {kind, fi};
         } else if (n.op == OpSampledImage && n.len >= 5 && image_value.count(w[3])) {
             auto [kind, fi] = image_value[w[3]];
             w[1] = int_si(fi, kind);
-            si_value[w[2]] = {kind, fi};
+            sampled_img_val[w[2]] = {kind, fi};
         } else if ((n.op == OpImageSampleImplicitLod || n.op == OpImageSampleExplicitLod ||
                     n.op == OpImageSampleProjImplicitLod || n.op == OpImageSampleProjExplicitLod ||
-                    n.op == OpImageGather) && n.len >= 5 && si_value.count(w[3])) {
-            uint32_t kind = si_value[w[3]].first, result = w[2], float_type = w[1];
+                    n.op == OpImageGather) && n.len >= 5 && sampled_img_val.count(w[3])) {
+            uint32_t kind = sampled_img_val[w[3]].first, result = w[2], float_type = w[1];
             w[1] = vec4_type(int_type(kind == 2 ? 1 : 0)), w[2] = bound++;
             out.insert(out.end(), w.begin(), w.end());
             out.insert(out.end(), {(4u << 16) | OpBitcast, float_type, result, w[2]});

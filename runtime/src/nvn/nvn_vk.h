@@ -58,6 +58,7 @@ VkInstance vk_instance();     // for the overlay (overlay/overlay_vk.cpp)
 uint32_t vk_queue_family();
 void* vk_gipa();              // the loader's vkGetInstanceProcAddr
 VkQueue vk_queue();
+VkSurfaceTransformFlagBitsKHR vk_surface_transform();
 // nvn_fsr.cpp: FSR 1 upscaling of the presented image (NX_FSR, the overlay menu's Upscaling setting).
 void set_fsr(bool on, float sharpness_stops);
 bool fsr_active();

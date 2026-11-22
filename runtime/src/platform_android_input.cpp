@@ -41,6 +41,7 @@
 #include <nx/runtime.h>
 
 #include "kernel.h"
+#include "overlay/overlay.h"
 #include "platform.h"
 #include "platform_android.h"
 #include "touch_layout.h"
@@ -65,6 +66,8 @@ struct Touch {
 std::vector<Touch> g_touches;
 float g_w = 1, g_h = 1;
 bool g_gamepad = false;  // the last input came from a controller: the drawn touch controls hide
+int32_t g_menu_pointer = -1;
+float g_menu_last_y = 0.0f;
 
 uint64_t key_to_button(int32_t k) {
     switch (k) {
@@ -104,7 +107,15 @@ int32_t on_input(android_app*, AInputEvent* e) {
     int32_t type = AInputEvent_getType(e);
     int32_t src = AInputEvent_getSource(e);
     if (type == AINPUT_EVENT_TYPE_KEY) {
-        uint64_t b = key_to_button(AKeyEvent_getKeyCode(e));
+        int32_t kc = AKeyEvent_getKeyCode(e);
+        if (overlay::is_open() && (kc == AKEYCODE_BACK || kc == AKEYCODE_ESCAPE)) {
+            if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN)
+                overlay::key_event(kc, overlay::KeyEscape, true);
+            else if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_UP)
+                overlay::key_event(kc, overlay::KeyEscape, false);
+            return 1;
+        }
+        uint64_t b = key_to_button(kc);
         if (!b) return 0;
         g_gamepad = true;
         if (AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_DOWN)
@@ -147,6 +158,42 @@ int32_t on_input(android_app*, AInputEvent* e) {
         g_w = float(ANativeWindow_getWidth(w));
         g_h = float(ANativeWindow_getHeight(w));
     }
+    if (overlay::wants_mouse()) {
+        g_touches.clear();
+        g_gamepad = false;
+        if (kind == AMOTION_EVENT_ACTION_DOWN || kind == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+            if (g_menu_pointer < 0) {
+                g_menu_pointer = AMotionEvent_getPointerId(e, index);
+                float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
+                g_menu_last_y = y;
+                overlay::mouse_move(x, y);
+                overlay::mouse_button(0, true);
+            }
+        } else if (kind == AMOTION_EVENT_ACTION_MOVE) {
+            for (size_t k = 0; k < AMotionEvent_getPointerCount(e); k++) {
+                if (AMotionEvent_getPointerId(e, k) == g_menu_pointer) {
+                    float x = AMotionEvent_getX(e, k), y = AMotionEvent_getY(e, k);
+                    overlay::mouse_move(x, y);
+                    if (!touch_edit_active() && std::fabs(y - g_menu_last_y) > 4.0f) {
+                        overlay::mouse_wheel((y - g_menu_last_y) / 48.0f);
+                        g_menu_last_y = y;
+                    }
+                    break;
+                }
+            }
+        } else if (kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_POINTER_UP ||
+                   kind == AMOTION_EVENT_ACTION_CANCEL) {
+            int32_t id = AMotionEvent_getPointerId(e, index);
+            if (id == g_menu_pointer || kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_CANCEL) {
+                float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
+                overlay::mouse_move(x, y);
+                overlay::mouse_button(0, false);
+                g_menu_pointer = -1;
+            }
+        }
+        return 1;
+    }
+    g_menu_pointer = -1;
     if (kind == AMOTION_EVENT_ACTION_DOWN || kind == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
         g_gamepad = false;
@@ -154,6 +201,10 @@ int32_t on_input(android_app*, AInputEvent* e) {
         touch_buttons(drawn);
         if (drawn) {  // a drawn layout (touch_layout.cpp): its buttons first, the rest of the left half is the stick
             uint64_t b = touch_hit(x / g_w, y / g_h, g_w / g_h);
+            if (b == kTouchMenu) {
+                overlay::toggle();
+                return 1;
+            }
             bool left = !b && x < g_w * 0.5f;
             if (b || left) g_touches.push_back({AMotionEvent_getPointerId(e, index), x, y, x, y, left, b});
         } else {
@@ -210,12 +261,14 @@ void read_pad(PadState& p) {
             p.buttons |= t.button;
         }
     }
+    overlay::filter_pad(p);
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
 }
 
 // The drawn layout's buttons (brighter while pressed) and the stick under the thumb; nothing while a controller is
 // in use or for games without a drawn layout.
 size_t touch_overlay(OverlayShape* out, size_t max) {
+    if (overlay::wants_mouse()) return 0;
     size_t n = 0, k = 0;
     const TouchButton* b = touch_buttons(n);
     if (!n) return 0;
@@ -237,6 +290,42 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
         out[k++] = {0.15f, 0.72f, 0.12f, 0.08f};  // where the stick goes
     }
     return k;
+}
+
+uint64_t touch_held_buttons() {
+    std::lock_guard lk(g_in);
+    uint64_t held = 0;
+    for (const auto& t : g_touches) held |= t.button;
+    return held;
+}
+
+bool touch_using_gamepad() {
+    std::lock_guard lk(g_in);
+    return g_gamepad;
+}
+
+bool touch_stick_visual(float& base_x, float& base_y, float& knob_x, float& knob_y, bool& active) {
+    std::lock_guard lk(g_in);
+    if (g_gamepad) return false;
+    const Touch* stick = nullptr;
+    for (const auto& t : g_touches)
+        if (t.left) stick = &t;
+    if (stick && g_w > 1.f && g_h > 1.f) {
+        float r = 0.12f, dx = (stick->x - stick->x0) / g_h, dy = (stick->y - stick->y0) / g_h;
+        float len = std::hypot(dx, dy), s = len > r ? r / len : 1.f;
+        base_x = stick->x0 / g_w;
+        base_y = stick->y0 / g_h;
+        knob_x = (stick->x0 / g_h + dx * s) * g_h / g_w;
+        knob_y = stick->y0 / g_h + dy * s;
+        active = true;
+    } else {
+        base_x = 0.15f;
+        base_y = 0.72f;
+        knob_x = base_x;
+        knob_y = base_y;
+        active = false;
+    }
+    return true;
 }
 
 }  // namespace nx::plat

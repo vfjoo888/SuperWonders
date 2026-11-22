@@ -177,14 +177,47 @@ struct Timer {
     }
 };
 
+void rotate_draw_data(ImDrawData* data, VkExtent2D extent, VkSurfaceTransformFlagBitsKHR t) {
+    if (t != VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR && t != VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR &&
+        t != VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)
+        return;
+    const float sw = float(extent.width), sh = float(extent.height);
+    const float lw = data->DisplaySize.x, lh = data->DisplaySize.y;
+    auto xform = [&](float x, float y) -> ImVec2 {
+        if (t == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) return {sw - y, x};
+        if (t == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR) return {sw - x, sh - y};
+        return {y, sh - x};  // ROTATE_270
+    };
+    for (int i = 0; i < data->CmdListsCount; ++i) {
+        ImDrawList* list = data->CmdLists[i];
+        for (ImDrawVert& v : list->VtxBuffer) v.pos = xform(v.pos.x, v.pos.y);
+        for (ImDrawCmd& cmd : list->CmdBuffer) {
+            float x0 = std::clamp(cmd.ClipRect.x, 0.0f, lw);
+            float y0 = std::clamp(cmd.ClipRect.y, 0.0f, lh);
+            float x1 = std::clamp(cmd.ClipRect.z, 0.0f, lw);
+            float y1 = std::clamp(cmd.ClipRect.w, 0.0f, lh);
+            ImVec2 a = xform(x0, y0);
+            ImVec2 b = xform(x1, y1);
+            cmd.ClipRect = {std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x), std::max(a.y, b.y)};
+        }
+    }
+    data->DisplayPos = {0.0f, 0.0f};
+    data->DisplaySize = {sw, sh};
+}
+
 bool record(VkCommandBuffer cb, uint32_t index, const std::vector<VkImage>& images, VkFormat format, VkExtent2D extent) {
     if (!enabled() || images.empty() || index >= images.size() || !frame_wanted()) return false;
     Timer timer;
     ensure_context();
     if (!ensure_backend(format, uint32_t(images.size())) || !ensure_framebuffers(images, extent)) return false;
     ImGui_ImplVulkan_NewFrame();  // uploads the font atlas the first time (before ImGui::NewFrame)
-    ImDrawData* data = build_frame(extent.width, extent.height);
+    const VkSurfaceTransformFlagBitsKHR t = nvn::vk_surface_transform();
+    const bool sideways = (t == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR || t == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR);
+    const uint32_t lw = sideways ? extent.height : extent.width;
+    const uint32_t lh = sideways ? extent.width : extent.height;
+    ImDrawData* data = build_frame(lw, lh);
     if (!data || data->CmdListsCount == 0) return false;
+    rotate_draw_data(data, extent, t);
     VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     bi.renderPass = g_pass;
     bi.framebuffer = g_framebuffers[index];

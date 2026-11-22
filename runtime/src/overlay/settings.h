@@ -43,6 +43,7 @@ struct Settings {
     int controller_preset = 1;  // 1 Nintendo positions (the default, as on the Switch: A on the right), 0 Xbox / DualSense
     int button_icons = 0;       // 0 Auto, 1 Nintendo, 2 Xbox, 3 PlayStation (applies after a restart)
     bool muted = false, fullscreen = false, always_on_top = false;
+    bool touch_overlay = true;
     bool metrics_enabled = false, low_vram_profile = false;
     bool discord_rpc = true;
     bool metric_fps = true, metric_one_percent_low = true, metric_game_speed = true, metric_frametime_graph = true;

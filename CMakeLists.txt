@@ -148,14 +148,14 @@ endif()
 # The game code library (nx/gamelib.h): the program holds the runtime only and loads the recompiled modules from
 # <game>_game.dll / lib<game>_game.so, built from the player's own files. So the program builds, and can ship, without
 # any generated code. OFF: one program with the game code linked in, as before (Android and macOS stay that way).
-if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(WIN32 OR ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(NX_GAME_LIBRARY_DEFAULT ON)
 else()
     set(NX_GAME_LIBRARY_DEFAULT OFF)
 endif()
 option(NX_GAME_LIBRARY "Load the game code from a library of its own" ${NX_GAME_LIBRARY_DEFAULT})
-if(NX_GAME_LIBRARY AND (ANDROID OR APPLE))
-    message(FATAL_ERROR "NX_GAME_LIBRARY is for Windows and Linux")
+if(NX_GAME_LIBRARY AND APPLE)
+    message(FATAL_ERROR "NX_GAME_LIBRARY is for Windows, Linux, and Android")
 endif()
 if(WIN32)
     set(NX_GAMELIB_FILE "${NX_GAME}_game.dll")
@@ -197,13 +197,13 @@ foreach(mod main sdk)
                                -march=armv8.2-a+crypto)
     elseif(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_options(game_${mod} PRIVATE -O2 -fvisibility=hidden)
-        if(NX_GAME_LIBRARY)
+        if(NX_GAME_LIBRARY AND NOT ANDROID)
             target_compile_options(game_${mod} PRIVATE -fno-semantic-interposition)
         endif()
     endif()
 endforeach()
 
-if(NX_GAME_LIBRARY)
+if(NX_GAME_LIBRARY AND NOT ANDROID)
     # wonder_game.dll / libwonder_game.so: the two modules and the jumps to the runtime (runtime/src/gamelib_entry.cpp).
     # Nothing else of the runtime is in it, and it exports only nx_gamelib_bind.
     add_library(${NX_GAME}_game SHARED runtime/src/gamelib_entry.cpp)
@@ -347,11 +347,13 @@ file(GLOB NX_GAME_SOURCES CONFIGURE_DEPENDS "${NX_GAME_DIR}/*.cpp")
 list(APPEND NX_RUNTIME_SOURCES ${NX_GAME_SOURCES} ${NX_SHADER_SOURCES} runtime/src/gamelib.cpp)
 if(NX_GAME_LIBRARY)
     # SuperWonders Launcher: the start screen before the game (setup, settings, mods, updates; launcher/launcher.h)
-    list(APPEND NX_RUNTIME_SOURCES runtime/src/launcher/launcher.cpp runtime/src/launcher/game_version.cpp
-         runtime/src/launcher/updates.cpp runtime/src/launcher/test_pad.cpp
-         runtime/src/launcher/update_core.c runtime/src/launcher/update_crypto.c)
-    if(NOT WIN32)
-        list(APPEND NX_RUNTIME_SOURCES runtime/src/launcher/update_appimage.c)  # (an AppImage updates itself)
+    list(APPEND NX_RUNTIME_SOURCES runtime/src/launcher/launcher.cpp runtime/src/launcher/game_version.cpp)
+    if(NOT ANDROID)
+        list(APPEND NX_RUNTIME_SOURCES runtime/src/launcher/updates.cpp runtime/src/launcher/test_pad.cpp
+             runtime/src/launcher/update_core.c runtime/src/launcher/update_crypto.c)
+        if(NOT WIN32)
+            list(APPEND NX_RUNTIME_SOURCES runtime/src/launcher/update_appimage.c)  # (an AppImage updates itself)
+        endif()
     endif()
 endif()
 # The release's version (VERSION): the launcher shows it, the updater compares it with the newest release's.
@@ -466,7 +468,7 @@ else()
         # LLVM-MinGW ships the XAudio2 2.9 import library under its SDK name. Its plain "xinput" is XInput 1.3 (the
         # DirectX 2010 redistributable, missing on a clean Windows); 1.4 ships with Windows 8 and later.
         target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_MODULES} xinput1_4 xaudio2_9 ole32 psapi shell32 uuid winhttp ws2_32 secur32 crypt32 bcrypt)
-        if(NX_GAME_LIBRARY)
+        if(NX_GAME_LIBRARY AND NOT ANDROID)
             # The C++ runtime shared with the game code library (one copy: LongJmp is thrown here and caught there),
             # so libc++.dll and libunwind.dll go next to the program. The UCRT stays a system DLL.
             get_filename_component(NX_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)

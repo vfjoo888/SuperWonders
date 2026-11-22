@@ -14,10 +14,12 @@
 #include <nx/runtime.h>
 
 #include "overlay/option_rows.h"
+#include "overlay/overlay.h"
 #include "overlay/overlay_internal.h"
 #include "overlay/overlay_ui.h"
 #include "nextendo_client.h"
 #include "svc_am.h"
+#include "touch_layout.h"
 
 namespace nx::overlay {
 
@@ -659,6 +661,7 @@ void video(MenuContext& c, const Labels& l) {
     Settings& s = c.settings;
     const int lang = std::clamp(s.language, 0, 12);
     rows::begin("##video", c.height);
+#if !defined(__ANDROID__)
     rows::section(kCommon[lang][0]);
     constexpr const char* kAspectText[13][3] = {
         {"Aspect ratio", "Takes effect the next time the game starts.", "16:9 (original)"},
@@ -708,6 +711,7 @@ void video(MenuContext& c, const Labels& l) {
     if (rows::toggle(l.fullscreen, &s.fullscreen, kDefaults.fullscreen, translated_desc(desc::fullscreen, lang))) settings_changed(true);
     if (!c.host.can_always_on_top) rows::disable_next();
     if (rows::toggle(l.topmost, &s.always_on_top, kDefaults.always_on_top, translated_desc(desc::topmost, lang))) settings_changed(true);
+#endif
     rows::section(kCommon[lang][1]);
     static constexpr const char* kNativeLabel[13] = {
         "Native", "Nativa", "Nativ", "Native", "Nativa", "네이티브", "ネイティブ",
@@ -903,6 +907,23 @@ void controls(MenuContext& c, const Labels& l) {
     const int lang = std::clamp(s.language, 0, 12);
     const InputText& t = kInputText[lang];
     rows::begin("##controls", c.height);
+#if defined(__ANDROID__)
+    rows::section("Touch Controls");
+    if (rows::toggle("Touch overlay", &s.touch_overlay, kDefaults.touch_overlay,
+                     "Show or hide the on-screen touch buttons."))
+        settings_changed(true);
+    if (rows::action("Edit touch layout", "",
+                     "Move and resize the on-screen touch buttons, then tap Save or Cancel.", true)) {
+        plat::touch_edit_enter();
+        c.open = false;
+    }
+    if (rows::action("Reset touch layout", "",
+                     "Restore the default touch button positions and sizes.", true)) {
+        plat::touch_reset_layout();
+        plat::touch_save_layout();
+        ui::notify("Touch layout reset");
+    }
+#endif
     rows::section(kHeaders[lang][1]);
 #if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
     if (rows::toggle(t.separate, &s.keyboard_separate, false, t.separate_help)) settings_changed(true);
@@ -975,6 +996,7 @@ void controls(MenuContext& c, const Labels& l) {
             settings_changed(true);
         }
     }
+#if !defined(__ANDROID__)
     rows::section(kHeaders[lang][0]);
     for (size_t a = 0; a < kControlCount; ++a) {
         char id[128];
@@ -983,6 +1005,7 @@ void controls(MenuContext& c, const Labels& l) {
         const char* name = waiting ? t.press_key : c.host.key_name ? c.host.key_name(s.keyboard_bindings[a]) : "?";
         if (rows::action(id, name, translated_desc(desc::key, lang), true, waiting)) c.capture_action = int(a);  // overlay.cpp takes the next key
     }
+#endif
     rows::section(kExtraUiText[lang].reset_sec);
     {
         char rlabel[64];
@@ -1083,8 +1106,10 @@ void system_tab(MenuContext& c, const Labels& l) {
         "在 Discord 上显示《超级马力欧兄弟 惊奇》的游玩状态。",
         "在 Discord 上顯示《超級瑪利歐兄弟 驚奇》的遊玩狀態。",
     };
+#if !defined(__ANDROID__)
     if (rows::toggle("Discord Rich Presence", &s.discord_rpc, kDefaults.discord_rpc, kDiscordDesc[lang]))
         settings_changed(true);
+#endif
     rows::section(kExtraUiText[lang].reset_sec);
     {
         char rlabel[64];

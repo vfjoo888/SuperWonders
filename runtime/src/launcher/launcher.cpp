@@ -372,6 +372,22 @@ bool set_mod(const Mod& m, bool on) {
     return !ec;
 }
 
+#if defined(__ANDROID__)
+}  // namespace
+void updates_init(bool) {}
+bool updates_busy() { return false; }
+void page_updates(float) {
+    rows::begin("##updates", ImGui::GetContentRegionAvail().y);
+    rows::section("Updates");
+    rows::action("SuperWonders Android", NX_VERSION_STRING,
+                 "Android builds are updated by installing a newer APK release.", false);
+    rows::end();
+}
+void test_pad_start() {}
+void test_pad_frame(uint64_t) {}
+namespace {
+#endif
+
 // ---- the launcher's state (the screen runs on the presenting thread, run() on the game's) ----
 enum Page { PagePlay, PageFiles, PageSettings, PageMods, PageUpdates, PageQuit, kPages };
 const char* const kPageNames[kPages] = {"Play", "Game files", "Settings", "Mods", "Updates", "Quit"};
@@ -680,6 +696,9 @@ void page_play() {
 
 // ---- the folder browser ----
 std::string home_folder() {
+#if defined(__ANDROID__)
+    return "/storage/emulated/0";
+#else
     const char* h = std::getenv(
 #if defined(_WIN32)
         "USERPROFILE"
@@ -688,6 +707,7 @@ std::string home_folder() {
 #endif
     );
     return h && *h ? h : "";
+#endif
 }
 
 void browse_open(int which) {
@@ -814,6 +834,7 @@ void page_browse() {
         rows::focus_first();
     }
     rows::section(lt(LtOtherWays));
+#if !defined(__ANDROID__)
     if (rows::action(lt(LtSystemPicker), "", "Choose the folder in the system's own window (a mouse helps).",
                      true)) {
         const char* title = exefs ? "Your ExeFS folder (main, sdk)"
@@ -825,6 +846,7 @@ void page_browse() {
             else g->picked_output = std::move(p);
         });
     }
+#endif
     if (output && plat::data_root() != plat::default_data_root() &&
         rows::action(lt(LtResetDefault), "",
                      ("Switch back to the default folder:\n" + plat::default_data_root()).c_str(), true)) {
@@ -857,6 +879,25 @@ void page_files() {
     if (rows::action(lt(LtOutputFolder), out_val.c_str(), out_desc.c_str(), true, g->status.ready == Ready::Yes))
         browse_open(3);
 
+#if defined(__ANDROID__)
+    const bool ready = g->status.ready == Ready::Yes;
+    const std::string ver_val =
+        ready ? (g->status.installed_version.empty() ? "Ready" : g->status.installed_version + " (Ready)") : "Not ready";
+    const std::string ver_desc =
+        ready ? ("Game data is ready in:\n" + cur_out +
+                 "\n\nTo rebuild from your own Switch dump, run tools/gamebuild.py --android-ndk on a PC and copy "
+                 "game/libwonder_game.so, analysis/, extract/romfs/ and spirv/ here.")
+              : (g->status.why +
+                 "\n\nPrepare the Android data pack on a PC with tools/gamebuild.py --android-ndk from your own "
+                 "ExeFS/RomFS dump, then copy it into:\n" +
+                 cur_out);
+    rows::action(lt(LtGameVersion), ver_val.c_str(), ver_desc.c_str(), false, ready);
+    if (rows::action("Recheck", "", "Scan the selected folder again after copying files.", true)) refresh_status();
+    rows::section(lt(LtSetUp));
+    if (ready && rows::action(lt(LtPlay), lt(LtStart), "Start Super Mario Bros. Wonder.", true, true)) g->play = true;
+    rows::end();
+}
+#else
     const std::string exefs = g->config.exefs.empty() ? lt(LtChoose) : fit_path(g->config.exefs, lt(LtExeFS));
     std::string exefs_desc =
         "The ExeFS folder of your own copy of the game (versions 1.0.0 and 1.2.1 supported). It holds main and sdk.";
@@ -923,6 +964,7 @@ void page_files() {
         plat::open_folder(cur_out);
     rows::end();
 }
+#endif
 
 // The active profile is chosen before boot. The legacy UID keeps the existing save path.
 void profile_dialog(bool open) {
@@ -1348,6 +1390,7 @@ void page_settings() {
     rows::begin("##settings", ImGui::GetContentRegionAvail().y);
     rows::section(lt(LtSettings));
     const bool open_profiles = rows::action("Profiles", "", "Create and select local profiles and set their names or JPEG icons.", true);
+#if !defined(__ANDROID__)
     static constexpr const char* kAspectText[13][3] = {
         {"Aspect ratio", "Takes effect the next time the game starts.", "16:9 (original)"},
         {"Formato schermo", "Si applica al prossimo avvio del gioco.", "16:9 (originale)"},
@@ -1368,6 +1411,7 @@ void page_settings() {
     int aspect = overlay::aspect_ratio();
     if (rows::choice(kAspectText[lang][0], &aspect, aspect_names, 3, 0, kAspectText[lang][1]))
         overlay::set_aspect_ratio(aspect);
+#endif
     if (rows::action(lt(LtOpenSettings), "", "Display, graphics, audio, controls and the overlay: the same settings as "
                                           "the in-game menu (F1, or Minus + Plus held). Saved in pc-settings.ini.",
                      true, true))

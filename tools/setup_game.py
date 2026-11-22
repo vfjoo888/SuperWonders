@@ -78,7 +78,8 @@ def system_font():
     else:
         # Common locations on Debian/Ubuntu, Fedora, and Arch/openSUSE. Fedora packages DejaVu Sans under
         # fonts/dejavu-sans-fonts rather than fonts/truetype/dejavu.
-        paths = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        paths = ["/system/fonts/Roboto-Regular.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                  "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
                  "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
                  "/usr/share/fonts/TTF/DejaVuSans.ttf",

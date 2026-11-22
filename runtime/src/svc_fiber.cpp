@@ -11,6 +11,9 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#elif defined(__ANDROID__) && defined(__aarch64__)
+#include <cstring>
+#include <pthread.h>
 #else
 #include <pthread.h>
 #include <ucontext.h>
@@ -39,6 +42,10 @@ struct HostFiber {
     CPU cpu{};
 #if defined(_WIN32)
     void* win_fiber = nullptr;
+#elif defined(__ANDROID__) && defined(__aarch64__)
+    struct Arm64Ctx { void* sp = nullptr; } uctx{};
+    std::vector<uint8_t> host_stack;
+    bool has_ctx = false;
 #else
     ucontext_t uctx{};
     std::vector<uint8_t> host_stack;
@@ -93,8 +100,58 @@ void release_prev_fiber() {
     }
 }
 #else
+#if defined(__ANDROID__) && defined(__aarch64__)
+using PosixFiberCtx = HostFiber::Arm64Ctx;
+
+extern "C" void nx_arm64_swap_ctx(void** from_sp, void* to_sp);
+extern "C" void nx_arm64_fiber_trampoline();
+__asm__(
+    ".text\n"
+    ".align 2\n"
+    ".type nx_arm64_swap_ctx, %function\n"
+    "nx_arm64_swap_ctx:\n"
+    "  sub sp, sp, #160\n"
+    "  stp x19, x20, [sp, #0]\n"
+    "  stp x21, x22, [sp, #16]\n"
+    "  stp x23, x24, [sp, #32]\n"
+    "  stp x25, x26, [sp, #48]\n"
+    "  stp x27, x28, [sp, #64]\n"
+    "  stp x29, x30, [sp, #80]\n"
+    "  stp d8,  d9,  [sp, #96]\n"
+    "  stp d10, d11, [sp, #112]\n"
+    "  stp d12, d13, [sp, #128]\n"
+    "  stp d14, d15, [sp, #144]\n"
+    "  cbz x0, 1f\n"
+    "  mov x9, sp\n"
+    "  str x9, [x0]\n"
+    "1:\n"
+    "  mov sp, x1\n"
+    "  ldp x19, x20, [sp, #0]\n"
+    "  ldp x21, x22, [sp, #16]\n"
+    "  ldp x23, x24, [sp, #32]\n"
+    "  ldp x25, x26, [sp, #48]\n"
+    "  ldp x27, x28, [sp, #64]\n"
+    "  ldp x29, x30, [sp, #80]\n"
+    "  ldp d8,  d9,  [sp, #96]\n"
+    "  ldp d10, d11, [sp, #112]\n"
+    "  ldp d12, d13, [sp, #128]\n"
+    "  ldp d14, d15, [sp, #144]\n"
+    "  add sp, sp, #160\n"
+    "  ret\n"
+    ".size nx_arm64_swap_ctx, .-nx_arm64_swap_ctx\n"
+    ".align 2\n"
+    ".type nx_arm64_fiber_trampoline, %function\n"
+    "nx_arm64_fiber_trampoline:\n"
+    "  mov x0, x19\n"
+    "  bl nx_arm64_fiber_entry\n"
+    ".size nx_arm64_fiber_trampoline, .-nx_arm64_fiber_trampoline\n"
+);
+#else
+using PosixFiberCtx = ucontext_t;
+#endif
+
 struct ThreadFiberState {
-    ucontext_t root_ctx{};
+    PosixFiberCtx root_ctx{};
     bool has_root = false;
     uint64_t current_guest = 0;
     HostFiber* current_host = nullptr;
@@ -136,9 +193,13 @@ void release_prev_fiber() {
     }
 }
 
-__attribute__((noinline)) void posix_switch_fiber(ucontext_t* from_ctx, ucontext_t* to_ctx) {
+__attribute__((noinline)) void posix_switch_fiber(PosixFiberCtx* from_ctx, PosixFiberCtx* to_ctx) {
     asm volatile("" ::: "memory");
+#if defined(__ANDROID__) && defined(__aarch64__)
+    nx_arm64_swap_ctx(&from_ctx->sp, to_ctx->sp);
+#else
     ::swapcontext(from_ctx, to_ctx);
+#endif
     asm volatile("" ::: "memory");
 }
 #endif
@@ -218,7 +279,7 @@ void posix_fiber_entry(uint32_t lo, uint32_t hi) {
             (unsigned long long)hf->guest_fiber, (unsigned long long)next_guest);
     }
     HostFiber* target_hf = nullptr;
-    ucontext_t* target_ctx = nullptr;
+    PosixFiberCtx* target_ctx = nullptr;
     if (next_guest) {
         std::lock_guard lk(g_fiber_mu);
         auto it = g_fibers.find(next_guest);
@@ -242,8 +303,21 @@ void posix_fiber_entry(uint32_t lo, uint32_t hi) {
         target_hf->cpu.tpidrro = tpidrro;
     }
     write_thread_current_fiber(tpidrro, next_guest);
-    if (target_ctx) ::setcontext(target_ctx);
+    if (target_ctx) {
+#if defined(__ANDROID__) && defined(__aarch64__)
+        nx_arm64_swap_ctx(nullptr, target_ctx->sp);
+#else
+        ::setcontext(target_ctx);
+#endif
+    }
 }
+
+#if defined(__ANDROID__) && defined(__aarch64__)
+extern "C" void nx_arm64_fiber_entry(HostFiber* hf) {
+    const uintptr_t p = reinterpret_cast<uintptr_t>(hf);
+    posix_fiber_entry(uint32_t(p & 0xFFFFFFFFu), uint32_t((uint64_t(p) >> 32) & 0xFFFFFFFFu));
+}
+#endif
 #endif
 
 void hle_initialize_fiber(CPU& c) {
@@ -272,6 +346,17 @@ void hle_initialize_fiber(CPU& c) {
 #if defined(_WIN32)
     const SIZE_T host_stack = SIZE_T(std::max<uint64_t>(stack_size, 2ull * 1024 * 1024));
     hf->win_fiber = CreateFiber(host_stack, fiber_entry_proc, hf);
+#elif defined(__ANDROID__) && defined(__aarch64__)
+    const size_t host_stack = std::max<size_t>(size_t(stack_size), 2u * 1024 * 1024);
+    hf->host_stack.resize(host_stack);
+    uintptr_t sp = (reinterpret_cast<uintptr_t>(hf->host_stack.data() + hf->host_stack.size())) & ~15ull;
+    sp -= 160;
+    std::memset(reinterpret_cast<void*>(sp), 0, 160);
+    auto* frame = reinterpret_cast<uint64_t*>(sp);
+    frame[0] = reinterpret_cast<uint64_t>(hf);  // x19
+    frame[11] = reinterpret_cast<uint64_t>(&nx_arm64_fiber_trampoline);  // x30
+    hf->uctx.sp = reinterpret_cast<void*>(sp);
+    hf->has_ctx = true;
 #else
     const size_t host_stack = std::max<size_t>(size_t(stack_size), 2u * 1024 * 1024);
     hf->host_stack.resize(host_stack);
@@ -382,11 +467,13 @@ void hle_switch_to_fiber(CPU& c) {
     const uint64_t target_guest = c.x[0];
     uint64_t cur_guest = 0;
     HostFiber* cur_host = nullptr;
-    ucontext_t* from_ctx = nullptr;
+    PosixFiberCtx* from_ctx = nullptr;
     {
         auto& st = thread_fiber_state();
         if (!st.has_root) {
+#if !(defined(__ANDROID__) && defined(__aarch64__))
             ::getcontext(&st.root_ctx);
+#endif
             st.has_root = true;
         }
         cur_guest = st.current_guest;
@@ -394,7 +481,7 @@ void hle_switch_to_fiber(CPU& c) {
         from_ctx = cur_host ? &cur_host->uctx : &st.root_ctx;
     }
     HostFiber* target_hf = nullptr;
-    ucontext_t* target_ctx = nullptr;
+    PosixFiberCtx* target_ctx = nullptr;
     if (target_guest == 0) {
         target_ctx = &thread_fiber_state().root_ctx;
     } else {

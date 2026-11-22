@@ -54,6 +54,7 @@ bool load_settings(const std::string& path, Settings& s) {
         else if (std::sscanf(l, "muted=%d", &v) == 1) s.muted = v != 0;
         else if (std::sscanf(l, "fullscreen=%d", &v) == 1) s.fullscreen = v != 0;
         else if (std::sscanf(l, "always_on_top=%d", &v) == 1) s.always_on_top = v != 0;
+        else if (std::sscanf(l, "touch_overlay=%d", &v) == 1) s.touch_overlay = v != 0;
         else if (std::sscanf(l, "language=%d", &v) == 1) s.language = std::clamp(v, 0, 12);
         else if (std::sscanf(l, "theme=%d", &v) == 1) s.theme = std::clamp(v, 0, 4);
         else if (std::sscanf(l, "game_language=%d", &v) == 1) s.game_language = std::clamp(v, 0, 17);
@@ -119,7 +120,8 @@ void save_settings(const std::string& path, const Settings& s) {
       << "\naudio_mode=" << s.audio_mode << "\nstereo_separation=" << s.stereo_separation
       << "\naspect_ratio=" << std::max(0, s.aspect_ratio)
       << "\ninternal_resolution=" << s.internal_resolution << "\nmuted=" << s.muted << "\nfullscreen=" << s.fullscreen
-      << "\nalways_on_top=" << s.always_on_top << "\nlanguage=" << s.language << "\ntheme=" << s.theme << "\ngame_language=" << s.game_language
+      << "\nalways_on_top=" << s.always_on_top << "\ntouch_overlay=" << s.touch_overlay
+      << "\nlanguage=" << s.language << "\ntheme=" << s.theme << "\ngame_language=" << s.game_language
       << "\ngame_language_version=2"
       << "\nmemory_limit_gb=" << s.memory_limit_gb << "\nlow_vram_profile=" << s.low_vram_profile
       << "\ndiscord_rpc=" << s.discord_rpc

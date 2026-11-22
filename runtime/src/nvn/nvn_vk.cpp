@@ -491,6 +491,7 @@ VkInstance vk_instance() { return g_instance; }
 void* vk_gipa() { return g_gipa; }
 VkPhysicalDevice vk_physical() { return g_physical; }
 VkQueue vk_queue() { return g_queue; }
+VkSurfaceTransformFlagBitsKHR vk_surface_transform() { return g_sc_transform; }
 uint32_t vk_queue_family() { return g_family; }
 bool vk_depth_clip_control() { return g_depth_clip_control; }
 bool vk_gpl() { return g_gpl; }
@@ -739,7 +740,7 @@ uint64_t present_headless(uint64_t texture) {
 // on its own: a cleared swapchain image with the overlay on top, at most 30 times a second.
 static bool swapchain_size_mismatch() {
     uint32_t pw = 0, ph = 0;
-    plat::window_size(pw, ph);
+    plat::screen_size(pw, ph);
     if (!pw || !ph) return false;
     bool sideways = g_sc_transform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR);
     uint32_t ew = sideways ? g_sc_extent.height : g_sc_extent.width;

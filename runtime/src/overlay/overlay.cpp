@@ -21,6 +21,7 @@
 #include "overlay/overlay_ui.h"
 #include "discord_rpc.h"
 #include "nextendo_client.h"
+#include "touch_layout.h"
 
 namespace nx::overlay {
 
@@ -44,7 +45,7 @@ Settings g_settings;  // the presenting thread's copy
 std::atomic<bool> g_open{false};
 std::atomic<ScreenFn> g_screen{nullptr};  // a full-window screen under the menu (the launcher), or none
 // Input goes to the overlay: the menu is open, or a screen is shown.
-bool taking_input() { return g_open || g_screen.load(); }
+bool taking_input() { return g_open || g_screen.load() || plat::touch_edit_active(); }
 std::atomic<bool> g_metrics{false};
 std::atomic<int> g_input_frames{0};  // frames to run after input while closed (hover/close animations)
 std::atomic<bool> g_fading{false};   // the menu is still fading out
@@ -151,7 +152,11 @@ void draw_metrics(float height) {
                                ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                                ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("##metrics", nullptr, f)) {
-        constexpr float kScale = 0.74f;
+#if defined(__ANDROID__)
+        constexpr float kScale = 1.05f;
+#else
+        constexpr float kScale = 0.78f;
+#endif
         ImGui::SetWindowFontScale(kScale);
         // green at the target frame rate, amber a little under it, red well under (MangoHud colours its numbers so)
         const auto rate = [&](double v) {
@@ -162,11 +167,7 @@ void draw_metrics(float height) {
             ImGui::TableNextColumn();
             ImGui::TextColored(name_c, "%s", name);
             ImGui::TableNextColumn();
-            ImGui::PushFont(ui::title());  // (the numbers in the heavier face, at the body size)
-            ImGui::SetWindowFontScale(kScale * 40.0f / 72.0f);
             ImGui::TextColored(colour, fmt, v);
-            ImGui::PopFont();
-            ImGui::SetWindowFontScale(kScale);
             if (*unit) {
                 ImGui::SameLine(0, 5 * k);
                 ImGui::TextDisabled("%s", unit);
@@ -592,7 +593,135 @@ void speedrun_tick(double game_seconds, double wall_seconds, bool game_paused) {
     }
 }
 
+#if defined(__ANDROID__)
+void draw_touch_overlay(float w, float h) {
+    if (!g_settings.touch_overlay || plat::touch_using_gamepad()) return;
+    size_t n = 0;
+    const plat::TouchButton* btns = plat::touch_buttons(n);
+    if (!n) return;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const uint64_t held = plat::touch_held_buttons();
+    const float border_w = std::max(1.5f, h * 0.0025f);
+    for (size_t i = 0; i < n; ++i) {
+        const auto& b = btns[i];
+        const bool is_held = (b.button != plat::kTouchMenu) && (held & b.button);
+        const ImVec2 center(b.x * w, b.y * h);
+        const float rad = b.r * h;
+        const int fill_a = is_held ? 110 : 42;
+        const int ring_a = is_held ? 220 : 120;
+        dl->AddCircleFilled(center, rad, IM_COL32(255, 255, 255, fill_a), 36);
+        dl->AddCircle(center, rad, IM_COL32(255, 255, 255, ring_a), 36, border_w);
+        if (b.label && *b.label) {
+            const ImVec2 tsz = ImGui::CalcTextSize(b.label);
+            dl->AddText(ImVec2(center.x - tsz.x * 0.5f, center.y - tsz.y * 0.5f),
+                        IM_COL32(255, 255, 255, is_held ? 255 : 210), b.label);
+        }
+    }
+    float bx = 0, by = 0, kx = 0, ky = 0;
+    bool active = false;
+    if (plat::touch_stick_visual(bx, by, kx, ky, active)) {
+        const float base_r = 0.12f * h;
+        const float knob_r = 0.055f * h;
+        dl->AddCircleFilled(ImVec2(bx * w, by * h), base_r, IM_COL32(255, 255, 255, active ? 36 : 20), 40);
+        dl->AddCircle(ImVec2(bx * w, by * h), base_r, IM_COL32(255, 255, 255, active ? 130 : 75), 40, border_w);
+        if (active) {
+            dl->AddCircleFilled(ImVec2(kx * w, ky * h), knob_r, IM_COL32(255, 255, 255, 115), 32);
+        }
+    }
+}
+
+void draw_touch_editor(float w, float h, float scale) {
+    size_t n = 0;
+    plat::TouchButton* btns = plat::touch_buttons_mut(n);
+    if (!n) return;
+    static size_t selected = 0;
+    if (selected >= n) selected = 0;
+
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    bg->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(8, 10, 18, 145));
+
+    // Draw and drag buttons in a borderless full-screen canvas window.
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::Begin("##touch_edit_canvas", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (size_t i = 0; i < n; ++i) {
+        auto& b = btns[i];
+        const float rad = b.r * h;
+        const ImVec2 center(b.x * w, b.y * h);
+        ImGui::SetCursorScreenPos(ImVec2(center.x - rad, center.y - rad));
+        ImGui::PushID(int(i));
+        ImGui::InvisibleButton("##btn", ImVec2(rad * 2.0f, rad * 2.0f));
+        if (ImGui::IsItemActivated()) selected = i;
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+            const ImVec2 d = ImGui::GetIO().MouseDelta;
+            b.x = std::clamp(b.x + d.x / w, 0.03f, 0.97f);
+            b.y = std::clamp(b.y + d.y / h, 0.04f, 0.96f);
+        }
+        ImGui::PopID();
+
+        const bool sel = (i == selected);
+        const ImVec2 nc(b.x * w, b.y * h);
+        dl->AddCircleFilled(nc, rad, sel ? IM_COL32(70, 170, 255, 110) : IM_COL32(255, 255, 255, 55), 36);
+        dl->AddCircle(nc, rad, sel ? IM_COL32(120, 210, 255, 255) : IM_COL32(255, 255, 255, 170), 36,
+                      sel ? 3.5f * scale : 2.0f * scale);
+        if (b.label && *b.label) {
+            const ImVec2 tsz = ImGui::CalcTextSize(b.label);
+            dl->AddText(ImVec2(nc.x - tsz.x * 0.5f, nc.y - tsz.y * 0.5f), IM_COL32(255, 255, 255, 255), b.label);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+
+    // Floating toolbar with Size +/-, Reset, Save, and Cancel.
+    const float k = scale;
+    ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.93f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18 * k, 12 * k));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14 * k);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10 * k);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16 * k, 10 * k));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12 * k, 8 * k));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.13f, 0.94f));
+    if (ImGui::Begin("##touch_edit_bar", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings)) {
+        auto& sb = btns[selected];
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Button: %s", sb.label ? sb.label : "?");
+        ImGui::SameLine();
+        if (ImGui::Button(" - ")) sb.r = std::clamp(sb.r - 0.008f, 0.025f, 0.18f);
+        ImGui::SameLine();
+        if (ImGui::Button(" + ")) sb.r = std::clamp(sb.r + 0.008f, 0.025f, 0.18f);
+        ImGui::SameLine();
+        if (ImGui::Button("Reset")) plat::touch_reset_layout();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.58f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.68f, 0.34f, 1.0f));
+        if (ImGui::Button("Save")) plat::touch_edit_save();
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.58f, 0.20f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.68f, 0.25f, 0.25f, 1.0f));
+        if (ImGui::Button("Cancel")) plat::touch_edit_cancel();
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(5);
+}
+#endif
+
 bool frame_wanted() {
+#if defined(__ANDROID__)
+    if (plat::touch_edit_active()) return true;
+    if (g_settings.touch_overlay && !plat::touch_using_gamepad()) {
+        size_t n = 0;
+        if (plat::touch_buttons(n) && n > 0) return true;
+    }
+#endif
     return g_open || g_screen.load() || g_metrics || speedrun_timer_wanted() || g_input_frames > 0 || g_fading ||
            progress_wanted() || ui::notices_active();
 }
@@ -674,6 +803,12 @@ ImDrawData* build_frame(uint32_t w, uint32_t h) {
     g_fading = !open && reveal > 0.0f;
     const ScreenFn screen = g_screen.load();
     if (screen) screen(float(w), float(h));  // under the menu, which the screen can open (its Settings)
+#if defined(__ANDROID__)
+    if (plat::touch_edit_active())
+        draw_touch_editor(float(w), float(h), scale);
+    else if (!open && !screen && !progress_wanted())
+        draw_touch_overlay(float(w), float(h));
+#endif
     if (progress_wanted()) draw_progress(float(h));
     if (g_settings.metrics_enabled && !progress_wanted() && !screen) draw_metrics(float(h));  // (no game frames to measure yet)
     if (speedrun_timer_wanted() && !progress_wanted() && !screen) draw_speedrun_timer(float(h));

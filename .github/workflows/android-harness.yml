@@ -1,0 +1,55 @@
+name: Build spirv_harness (Android ARM64 NativeAOT)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/android-port]
+    paths:
+      - '.github/workflows/android-harness.yml'
+      - 'tools/maxwell/spirv_harness/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Fetch Ryubing shader translator source
+        run: |
+          mkdir -p private/third_party/ryubing
+          curl -fsSL https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz \
+            | tar -xz -C private/third_party/ryubing --strip-components=1
+
+      - name: Setup NDK clang wrapper for linux-bionic-arm64 NativeAOT
+        run: |
+          NDK_BIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          if [ ! -d "$NDK_BIN" ]; then
+            NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          fi
+          mkdir -p /tmp/ndk-wrap
+          printf '#!/bin/sh\nexec "%s/aarch64-linux-android29-clang" "$@"\n' "$NDK_BIN" > /tmp/ndk-wrap/clang
+          printf '#!/bin/sh\nexec "%s/llvm-objcopy" "$@"\n' "$NDK_BIN" > /tmp/ndk-wrap/objcopy
+          chmod +x /tmp/ndk-wrap/clang /tmp/ndk-wrap/objcopy
+          echo "/tmp/ndk-wrap" >> "$GITHUB_PATH"
+
+      - name: Publish spirv_harness NativeAOT (linux-bionic-arm64)
+        run: |
+          dotnet publish tools/maxwell/spirv_harness/SpirvHarness.csproj \
+            -c Release \
+            -r linux-bionic-arm64 \
+            -p:PublishAot=true \
+            -p:StripSymbols=true \
+            -o out/spirv_harness
+          ls -lh out/spirv_harness/spirv_harness
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spirv_harness-android-arm64
+          path: out/spirv_harness/spirv_harness
+          retention-days: 30

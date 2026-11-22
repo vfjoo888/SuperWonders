@@ -387,9 +387,13 @@ bool present_pass_record(VkCommandBuffer cb, GpuImage& src, const int32_t* crop,
     const float display_cw = cw * (src.uw ? uw_factor() : 1.0f);
     float scale = std::min(tw / display_cw, th / ch), bw = display_cw * scale / tw, bh = ch * scale / th;
     p.box[0] = (1 - bw) / 2, p.box[1] = (1 - bh) / 2, p.box[2] = bw, p.box[3] = bh;
-    // The touch controls (platform_android_input.cpp), in upright uv; none elsewhere.
+    // The touch controls are drawn with labels by overlay.cpp on Android; elsewhere only NX_OVERLAY_DEMO uses shader circles.
     plat::OverlayShape shapes[kOverlayMax];
+#if defined(__ANDROID__)
+    size_t count = 0;
+#else
     size_t count = plat::touch_overlay(shapes, kOverlayMax);
+#endif
     auto* dst = reinterpret_cast<float*>(ubo.ptr);
     for (size_t k = 0; k < count; k++)
         dst[4 * k] = shapes[k].x, dst[4 * k + 1] = shapes[k].y, dst[4 * k + 2] = shapes[k].r, dst[4 * k + 3] = shapes[k].alpha;
