@@ -58,7 +58,10 @@ bool compares(VkFormat f) {
     return cache[f] = depth && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
 }
 
-uint64_t serial_of(const GpuImage& img) { return img.rendered ? img.rendered_at : 0; }
+// Every write moves it (note_written): rendered_at moved at pass ends only, and an image filled by a clear, a copy or
+// an upload kept the twin of its first contents (Wonder's "nothing in shadow" stand-in read as all in shadow on AMD:
+// dark grass and blotched characters on the world map, vfjoo888/SuperWonders#123).
+uint64_t serial_of(const GpuImage& img) { return img.written; }
 
 bool make(Twin& t, const GpuImage& src) {
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -209,6 +212,11 @@ void copy(VkCommandBuffer cb, Twin& t, GpuImage& src) {
 }
 
 }  // namespace
+
+void note_written(GpuImage& img) {
+    static uint64_t serial = 0;  // under the GPU lock, as every caller
+    img.written = ++serial;
+}
 
 static bool blittable(VkFormat f) {
     static std::map<VkFormat, bool> cache;

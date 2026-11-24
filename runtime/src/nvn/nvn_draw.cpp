@@ -1221,6 +1221,7 @@ void pass_end_only(VkCommandBuffer cb, int reason) {
     for (uint32_t k = 0; k < 9; k++)  // this pass's targets only (the other slots may name freed images)
         if ((k < g_pass.color_count || (k == 8 && g_pass.depth)) && g_pass_images[k]) {
             g_pass_images[k]->rendered_at = g_pass_serial;
+            note_written(*g_pass_images[k]);
             g_pass_images[k]->rendered_frame = g_frame.load(std::memory_order_relaxed) + 1;
         }
     gpu_profile_mark(cb, "outside passes (clears, uploads, copies)");

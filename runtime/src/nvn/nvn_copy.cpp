@@ -160,6 +160,7 @@ void replay_copy(VkCommandBuffer cb, const Cmd& c, const CmdList& list) {
     }
     if (same) general_barrier(cb, *dst);
     dst->rendered = true;  // GPU-written from now on
+    note_written(*dst);
 }
 
 NX_HLE("nvnCommandBufferCopyTextureToTexture", CopyTextureToTexture);

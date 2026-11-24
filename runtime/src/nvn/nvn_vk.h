@@ -34,6 +34,10 @@ struct GpuImage {
     bool mutable_format = true;
     uint64_t rendered_at = 0;      // the pass-end serial of the last pass that rendered into it (nvn_draw.cpp, G4)
     uint64_t rendered_frame = 0;   // g_frame + 1 at that pass's end (0: never rendered): may a draw into it skip a frame
+    // Bumped by every write to it (pass end, clear, copy, storage, upload, texel writes; note_written): what its
+    // depth-compare twin is refreshed by. rendered_at moves at pass ends only, so a twin of an image the game fills by
+    // a clear or a copy kept its first contents for the session (vfjoo888/SuperWonders#123).
+    uint64_t written = 0;
 
     // An R8 texture always read as (1, 1, 1, R) (a glyph cache): stored as RGBA8 (255, 255, 255, R) and sampled
     // without swizzle. MoltenVK returned alpha 0 for that view swizzle on a 2D-array view, so all text was invisible.
@@ -41,6 +45,9 @@ struct GpuImage {
     uint32_t nvn_format = 0;  // the texture's NVN format
     uint64_t pool = 0, pool_offset = 0, pool_size = 0;  // guest NVN texture storage range (alias diagnostics)
 };
+
+// The GPU (or an upload) wrote `img`: a new GpuImage::written serial (nvn_compare_twin.cpp).
+void note_written(GpuImage& img);
 
 struct GpuImageMemoryStats {
     uint64_t live_bytes = 0, peak_bytes = 0;

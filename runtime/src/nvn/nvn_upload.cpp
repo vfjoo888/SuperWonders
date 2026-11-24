@@ -322,6 +322,7 @@ bool vk_1d_images() {
 }
 
 void clear_image(VkCommandBuffer cb, GpuImage& img, bool magenta) {
+    note_written(img);
     transition(cb, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkImageSubresourceRange r{img.aspect, 0, img.levels, 0, img.layers};
     if (img.aspect == VK_IMAGE_ASPECT_COLOR_BIT) {
@@ -336,6 +337,7 @@ void clear_image(VkCommandBuffer cb, GpuImage& img, bool magenta) {
 
 void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img) {
     img.uploaded = true;
+    note_written(img);
     if (gpu_profile_on()) gpu_profile_mark(cb, "texture uploads");
     if (!t.memory || !t.storage_size) return;
     if (std::getenv("NX_TRACE_UPLOADS") && t.storage_size >= (1u << 20)) {
