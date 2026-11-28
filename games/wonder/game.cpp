@@ -223,6 +223,7 @@ Fn g_ortho_original = nullptr;
 Fn g_camera_entry_original = nullptr;
 Fn g_active_rect_original = nullptr;
 uint64_t g_world_camera_caller = 0;
+uint64_t g_active_rect_default_caller = 0;
 std::atomic<unsigned> g_active_rect_count{0};
 std::atomic<unsigned> g_camera_entry_calls{0};
 std::atomic<unsigned> g_ortho_samples{0};
@@ -233,7 +234,7 @@ void active_rect_hook(CPU& c) {
     const ModuleInfo* main = game_lib().main;
     static const uint64_t chosen_caller = [] {
         const char* v = std::getenv("NX_UW_RECT_CALLER");
-        return v ? std::strtoull(v, nullptr, 16) : uint64_t(0x6caba4);
+        return v ? std::strtoull(v, nullptr, 16) : g_active_rect_default_caller;
     }();
     static const bool candidate_group = [] {
         const char* v = std::getenv("NX_UW_RECT_GROUP_TEST");
@@ -246,7 +247,9 @@ void active_rect_hook(CPU& c) {
     const uint64_t rel = main && c.x[30] >= main->base ? c.x[30] - main->base : 0;
     const bool relevant = main && (candidate_all || rel == chosen_caller || (candidate_group &&
         (rel == 0x1d1f50 || rel == 0x441328 || rel == 0x82d62c || rel == 0x3293a8 ||
-         rel == 0x329008 || rel == 0x49b224)));
+         rel == 0x329008 || rel == 0x49b224 ||
+         rel == 0x1bf3ac || rel == 0x4d8bf8 || rel == 0x833af8 || rel == 0x3cb55c ||
+         rel == 0x3cb1bc || rel == 0x49e9c8)));
     const uint64_t caller = c.x[30];
     const uint64_t result = c.x[0];
     g_active_rect_original(c);
@@ -355,16 +358,34 @@ void install_wide_probe() {
     const char* rect_trace = std::getenv("NX_UW_RECT_TRACE");
     if ((active_test && std::strcmp(active_test, "1") == 0) ||
         (rect_trace && std::strcmp(rect_trace, "1") == 0)) {
-        constexpr uint64_t fn = 0x1d6610;
+        struct ActiveRectTarget {
+            const char* version;
+            uint64_t fn;
+            uint64_t caller_site;
+            uint32_t caller_word;
+            uint64_t default_caller;
+        };
+        constexpr ActiveRectTarget active_targets[] = {
+            {"1.0.0", 0x1d6610, 0x6caba0, 0x97ec2e9c, 0x6caba4},
+            {"1.2.1", 0x1c3bf0, 0x665418, 0x97ed79f6, 0x66541c},
+        };
         constexpr uint32_t words[] = {0x2a2103e8, 0x3900401f, 0x72001d1f, 0xa9007c1f};
-        bool ok = fn + 16 <= main->text_size && 0x6caba4 <= main->text_size &&
-                  ld<uint32_t>(main->base + 0x6caba0) == 0x97ec2e9c;
-        for (unsigned i = 0; ok && i < 4; ++i) ok &= ld<uint32_t>(main->base + fn + 4 * i) == words[i];
-        if (ok && module->table[fn / 4]) {
-            g_active_rect_original = module->table[fn / 4];
-            module->table[fn / 4] = active_rect_hook;
-            log("widescreen active-area test: hook installed at main+1d6610");
-        } else log("widescreen active-area test: incompatible code or unavailable");
+        bool installed = false;
+        for (const ActiveRectTarget& target : active_targets) {
+            bool ok = target.fn + 16 <= main->text_size && target.caller_site + 4 <= main->text_size &&
+                      ld<uint32_t>(main->base + target.caller_site) == target.caller_word;
+            for (unsigned i = 0; ok && i < 4; ++i) ok &= ld<uint32_t>(main->base + target.fn + 4 * i) == words[i];
+            if (ok && module->table[target.fn / 4]) {
+                g_active_rect_default_caller = target.default_caller;
+                g_active_rect_original = module->table[target.fn / 4];
+                module->table[target.fn / 4] = active_rect_hook;
+                log("widescreen active-area: hook installed (%s at main+%llx, caller main+%llx)",
+                    target.version, (unsigned long long)target.fn, (unsigned long long)target.default_caller);
+                installed = true;
+                break;
+            }
+        }
+        if (!installed) log("widescreen active-area: incompatible code or unavailable");
     }
     constexpr uint64_t camera_entry = 0x160de38;
     if (trace && camera_entry + 4 <= main->text_size && ld<uint32_t>(main->base + camera_entry) == 0x14000003 &&
@@ -450,21 +471,23 @@ static void update_wide_aspect() {
         const char* value = std::getenv("NX_WONDER_HORPLUS");
         return value && value[0] && std::strcmp(value, "0") != 0;
     }();
-    static uint32_t last_width = 0, last_height = 0;
+    static float last_aspect = 0.0f;
     uint32_t width = 1920, height = 1080;
     if (horplus) plat::window_size(width, height);
     if (!width || !height) width = 1920, height = 1080;
-    if (width == last_width && height == last_height) return;
+
+    const float aspect = horplus ? float(width) / float(height)
+                                 : (nvn::uw_on() ? (16.0f / 9.0f) * nvn::uw_factor() : (16.0f / 9.0f));
+    if (aspect == last_aspect) return;
 
     const uint64_t page = frame_step_page();
     if (!page) return;
-    const float aspect = horplus ? float(width) / float(height) : (16.0f / 9.0f);
     auto* aspect_bits = reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(page + 8));
     std::atomic_ref<uint32_t>(*aspect_bits).store(float_bits(aspect), std::memory_order_release);
-    last_width = width;
-    last_height = height;
-    if (horplus)
-        log("widescreen perspective: runtime camera aspect %.5f from window %u x %u", double(aspect), width, height);
+    last_aspect = aspect;
+    if (horplus || nvn::uw_on())
+        log("widescreen perspective: runtime camera aspect %.5f%s", double(aspect),
+            horplus ? " (from window size)" : " (from ultrawide factor)");
 }
 
 static void init_frame_step() {
@@ -1059,7 +1082,9 @@ void game::frame_presented(uint64_t now_ns, int present_interval) {
         g_course_demo_active.store(false, std::memory_order_relaxed);
         g_stage_ready_ns.store(0, std::memory_order_relaxed);
     }
-    overlay::speedrun_tick(seconds, dt, is_game_paused());
+    const bool paused = is_game_paused();
+    nvn::uw_set_in_course_unpaused(g_in_course_session.load(std::memory_order_relaxed) && !paused);
+    overlay::speedrun_tick(seconds, dt, paused);
     speed_elapsed += dt;
     speed_simulated += seconds;
     if (speed_elapsed >= 0.5) {

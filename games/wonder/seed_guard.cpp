@@ -62,6 +62,8 @@ struct VersionLayout {
     uint64_t cam_scroll_update;
     uint64_t grav_scale_update;
     uint64_t player_comp_calc;
+    uint64_t cluster_trail_update;
+    uint64_t cluster_pose_update;
 };
 
 void body_off(CPU& c);
@@ -73,6 +75,8 @@ void anm_delta_vel_y(CPU& c);
 void cam_scroll_update(CPU& c);
 void grav_scale_update(CPU& c);
 void player_comp_calc(CPU& c);
+void cluster_trail_update(CPU& c);
+void cluster_pose_update(CPU& c);
 
 Hook g_off = {"rigid body off",
               {0xa9be7bfd, 0xf9000bf3, 0x910003fd, 0xf9400408, 0xf9400508, 0xf940fd09, 0xf9410528, 0xb4000348},
@@ -120,10 +124,18 @@ Hook g_player_comp_calc = {"PlayerComponent::calc",
                            {0xd10383ff, 0x6d0723e9, 0xa9087bfd, 0xa9096ffc, 0xa90a67fa, 0xa90b5ff8, 0xa90c57f6, 0xa90d4ff4},
                            8,
                            player_comp_calc};
+Hook g_cluster_trail_update = {"ClusterModelDrawComponent::updateTrail",
+                               {0xd104c3ff, 0xfd005bec, 0x6d0c2beb, 0x6d0d23e9, 0xa90e7bfd, 0xa90f67fc, 0xa9105ff8, 0xa91157f6},
+                               8,
+                               cluster_trail_update};
+Hook g_cluster_pose_update = {"ClusterModelDrawComponent::updatePose",
+                              {0x6db63bef, 0x6d0133ed, 0x6d022beb, 0x6d0323e9, 0xa9047bfd, 0xa9056ffc, 0xa90667fa, 0xa9075ff8},
+                              8,
+                              cluster_pose_update};
 
 constexpr VersionLayout kVersions[] = {
-    {"1.0.0", 0x33326b8, 0x2b7238, 0x4d42f0, 0x16d877c, 0x16d87b4, 0x36427b0, 0x16553ac, 0x153d750, 0x6b7eb4, 0x152dfd4, 0x273868},
-    {"1.2.1", 0x34bbc88, 0x2dfb70, 0x4d4c28, 0x17fd50c, 0x17fd544, 0x37cf340, 0x177a76c, 0x16629bc, 0x6c55ac, 0x1653344, 0x2885a4},
+    {"1.0.0", 0x33326b8, 0x2b7238, 0x4d42f0, 0x16d877c, 0x16d87b4, 0x36427b0, 0x16553ac, 0x153d750, 0x6b7eb4, 0x152dfd4, 0x273868, 0x1868144, 0x1868770},
+    {"1.2.1", 0x34bbc88, 0x2dfb70, 0x4d4c28, 0x17fd50c, 0x17fd544, 0x37cf340, 0x177a76c, 0x16629bc, 0x6c55ac, 0x1653344, 0x2885a4, 0x198e0b8, 0x198e6e4},
 };
 
 uint64_t g_rigid_body_vtable = 0;
@@ -263,11 +275,13 @@ void cam_scroll_update(CPU& c) {
         return;
     }
     uint64_t pcam = 0;
+    uint64_t actor_impl = 0;
     if (uint64_t ai = ld<uint64_t>(cam + 8)) {
         if (uint64_t actor = ld<uint64_t>(ai + 8)) {
-            if (uint64_t impl = ld<uint64_t>(actor + 0x1f8)) {
-                uint64_t comps = ld<uint64_t>(impl + 0x208);
-                uint32_t max_c = ld<uint32_t>(impl + 0x200);
+            actor_impl = ld<uint64_t>(actor + 0x1f8);
+            if (actor_impl) {
+                uint64_t comps = ld<uint64_t>(actor_impl + 0x208);
+                uint32_t max_c = ld<uint32_t>(actor_impl + 0x200);
                 if (comps && max_c > 0x42) pcam = ld<uint64_t>(comps + 0x210);
             }
         }
@@ -288,21 +302,27 @@ void cam_scroll_update(CPU& c) {
     }
     // GameCourseCamera::calc clamps the vertical deadzone overshoot [cam+0xa4] to +-1.5 * step_ratio,
     // then multiplies it by (1 - 0.5^step_ratio) (~0.159 at 240 FPS vs 0.5 at 60 FPS), capping vertical
-    // camera speed at ~14.3 u/s instead of 45 u/s. Restore the 60 Hz max vertical tracking speed.
+    // camera speed at ~14.3 u/s instead of 45 u/s. Restore the 60 Hz max vertical tracking speed,
+    // and keep actor_impl+0x298 synchronized with pcam->pos.y to avoid per-frame snap-back oscillation.
     if (pcam) {
         const float a4 = ld<float>(cam + 0xa4);
         if (std::fabs(a4) >= 1.5f * ratio - 1e-3f) {
             const float pcam_y_after = ld<float>(pcam + 0x2c);
             const float step_y = pcam_y_after - pcam_y_before;
-            const float scale = 0.5f / (1.0f - std::pow(0.5f, ratio));
-            float fixed_step = step_y * scale;
-            const float max_step = 0.75f * ratio;
-            if (fixed_step > max_step) fixed_step = max_step;
-            if (fixed_step < -max_step) fixed_step = -max_step;
-            const float extra_y = fixed_step - step_y;
-            if (std::fabs(extra_y) > 1e-6f) {
-                st<float>(pcam + 0x2c, pcam_y_before + fixed_step);
-                st<float>(pcam + 0x38, ld<float>(pcam + 0x38) + extra_y);
+            const float k_y = 1.0f - std::pow(0.5f, ratio);
+            const float min_capped_step = 0.5f * k_y * 1.5f * ratio;
+            if (step_y * a4 > 0.0f && std::fabs(step_y) >= min_capped_step) {
+                const float scale = 0.5f / k_y;
+                float fixed_step = step_y * scale;
+                const float max_step = 0.75f * ratio;
+                if (fixed_step > max_step) fixed_step = max_step;
+                if (fixed_step < -max_step) fixed_step = -max_step;
+                const float extra_y = fixed_step - step_y;
+                if (std::fabs(extra_y) > 1e-6f) {
+                    st<float>(pcam + 0x2c, pcam_y_before + fixed_step);
+                    st<float>(pcam + 0x38, ld<float>(pcam + 0x38) + extra_y);
+                    if (actor_impl) st<float>(actor_impl + 0x298, ld<float>(actor_impl + 0x298) + extra_y);
+                }
             }
         }
     }
@@ -406,6 +426,77 @@ void player_comp_calc(CPU& c) {
     }
 }
 
+void cluster_trail_update(CPU& c) {
+    const uint64_t comp = c.x[0];
+    const uint64_t actor = comp ? ld<uint64_t>(comp + 0x10) : 0;
+    const float ratio = comp ? ld<float>(comp + 0xb8) : 1.0f;
+    const bool active = comp && actor &&
+        ((ld<uint8_t>(actor + 0x3dc) & 0x62u) != 0 || ld<uint8_t>(comp + 0x251) != 0);
+    if (!active || !(ratio > 0.01f && ratio < 0.99f)) {
+        g_cluster_trail_update.game(c);
+        return;
+    }
+    const int32_t idx_before = ld<int32_t>(comp + 0xa0);
+    g_cluster_trail_update.game(c);
+    const int32_t idx_after = ld<int32_t>(comp + 0xa0);
+    if (idx_after != idx_before) return;
+
+    // 0x198e134 (1.2.1) / 0x18681c0 (1.0.0) truncates step_ratio (< 1.0 above 60 FPS) with fcvtzs to 0,
+    // freezing the 300-entry trail ring-buffer write index [comp+0xa0]. Advance at 60 Hz (acc += ratio)
+    // so the 300-slot buffer keeps 5.0 s of history (matching cluster_pose_update's 60 Hz lag).
+    struct Acc { uint64_t comp; float acc; };
+    static Acc s_accs[32]{};
+    static unsigned s_next_slot = 0;
+    float* acc = nullptr;
+    for (auto& slot : s_accs) {
+        if (slot.comp == comp) { acc = &slot.acc; break; }
+    }
+    if (!acc) {
+        Acc& slot = s_accs[s_next_slot++ % 32];
+        slot.comp = comp;
+        slot.acc = 0.0f;
+        acc = &slot.acc;
+    }
+    *acc += ratio;
+    const int32_t inc = static_cast<int32_t>(*acc);
+    *acc -= static_cast<float>(inc);
+    if (inc > 0) {
+        int32_t idx = idx_after + inc;
+        if (idx >= 300) {
+            idx %= 300;
+            st<uint8_t>(comp + 0xa4, 1);
+        }
+        st<int32_t>(comp + 0xa0, idx);
+    }
+}
+
+void cluster_pose_update(CPU& c) {
+    const uint64_t comp = c.x[0];
+    const float ratio = comp ? ld<float>(comp + 0xb8) : 1.0f;
+    if (!comp || !(ratio > 0.01f && ratio < 0.99f)) {
+        g_cluster_pose_update.game(c);
+        return;
+    }
+    const uint32_t cnt = ld<uint32_t>(comp + 0x2c8);
+    const uint64_t arr = ld<uint64_t>(comp + 0x2d0);
+    if (!arr || cnt == 0 || cnt > 64) {
+        g_cluster_pose_update.game(c);
+        return;
+    }
+    // 0x198e99c (1.2.1) / 0x1868a28 (1.0.0) divides follower spacing by (60 / step_ratio) Hz, which
+    // inflates lag by 1/step_ratio and wraps the 300-slot buffer negative on trailing Bulrushes.
+    // Temporarily scale spacing by 1/step_ratio so lag is computed in 60 Hz slots matching updateTrail.
+    float saved[64];
+    const float inv = 1.0f / ratio;
+    for (uint32_t i = 0; i < cnt; ++i) {
+        const float v = ld<float>(arr + 4ULL * i);
+        saved[i] = v;
+        st<float>(arr + 4ULL * i, v * inv);
+    }
+    g_cluster_pose_update.game(c);
+    for (uint32_t i = 0; i < cnt; ++i) st<float>(arr + 4ULL * i, saved[i]);
+}
+
 bool matches(uint64_t offset, const Hook& h) {
     const ModuleInfo* main = game_lib().main;
     if (!main || offset + sizeof(uint32_t) * h.code_words > main->text_size || (offset & 3u) != 0) return false;
@@ -447,6 +538,10 @@ void seed_guard_init() {
             log("wonder: high-FPS PlayerSetGravityScale fix on (%s)", v.version);
         if (v.player_comp_calc && install(v.player_comp_calc, g_player_comp_calc))
             log("wonder: high-FPS PlayerComponent::calc counter fix on (%s)", v.version);
+        if (v.cluster_trail_update && install(v.cluster_trail_update, g_cluster_trail_update))
+            log("wonder: high-FPS ClusterModelDrawComponent trail counter fix on (%s)", v.version);
+        if (v.cluster_pose_update && install(v.cluster_pose_update, g_cluster_pose_update))
+            log("wonder: high-FPS ClusterModelDrawComponent pose lag fix on (%s)", v.version);
         break;
     }
 

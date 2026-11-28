@@ -542,13 +542,27 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     const bool ui_pick = !cam_patch || (ui_learn ? uw_is_ui_vertex_shader(vs) : !g_state.depth.depth_test);
     bool anchor_hud_left = false;
     float flower_offset = 0.0f;
+    auto expire_if_far = [&](bool matched, bool& seen, unsigned& far_count, unsigned limit,
+                             const float* f, float ref_x, float ref_y, float sx, float sy,
+                             float max_dx, float max_dy) {
+        if (!seen || matched) return;
+        const bool is_text_vs = vs->hash == "2fc962d8d063c1c9" || vs->hash == "a106c763cf05f818";
+        const bool is_far = is_text_vs
+            ? (std::fabs(f[3] - ref_x * sx) > max_dx || std::fabs(f[7] - ref_y * sy) > max_dy)
+            : (std::fabs(f[19] - ref_x) > max_dx || std::fabs(f[23] - ref_y) > max_dy);
+        if (is_far && ++far_count >= limit) {
+            seen = false;
+            far_count = 0;
+        }
+    };
     static uint64_t flower_frame = UINT64_MAX;
     static float flower_x = 0.0f, flower_y = 0.0f, flower_proj_x = 1.0f, flower_proj_y = 1.0f;
     static bool flower_seen = false;
     static float flower_direction = 1.0f;
+    static unsigned flower_far = 0;
     if (flags.flower && g_uw_wide && !g_state.depth.depth_test && vs && fs && t.color_count && t.colors[0]) {
         uint64_t frame = g_frame.load();
-        if (frame != flower_frame) { flower_frame = frame; flower_seen = false; }
+        if (frame != flower_frame) { flower_frame = frame; flower_seen = false; flower_far = 0; }
         GpuImage* target = primary_target;
         const Range& u = g_state.uniforms[0][0];
         const float* f = u.address && u.size >= 96 ? reinterpret_cast<const float*>(guest_bytes(u.address)) : nullptr;
@@ -574,6 +588,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 }
             }
             bool bubble = false;
+            bool flower_matched = false;
             if (vs->hash == "42ea61385aa6a70c" && fs->hash == "5bbd5392666b3406") {
                 for (const ResolvedTexture& r : g_textures.resolved) {
                     GpuImage* img = r.image;
@@ -585,20 +600,28 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                          (img->logical_height == 72 || img->logical_height == 104)))) bubble = true;
                 }
                 if (bubble) {
-                    flower_x = f[19]; flower_y = f[23]; flower_proj_x = f[0]; flower_proj_y = f[5]; flower_seen = true;
+                    flower_x = f[19]; flower_y = f[23]; flower_proj_x = f[0]; flower_proj_y = f[5];
+                    flower_seen = true; flower_far = 0; flower_matched = true;
                     flower_direction = flags.alt && std::fabs(f[16] - 0.95f) < 0.005f ? 2.0f : 1.0f;
                     flower_offset = (flower_x - (flower_direction == 2.0f ? 384.0f : 0.0f)) * (uw_factor() - 1.0f);
                 }
-                else if (flower_seen && std::fabs(f[19] - flower_x) < 160.0f && std::fabs(f[23] - flower_y) < 100.0f)
+                else if (flower_seen && std::fabs(f[19] - flower_x) < 160.0f && std::fabs(f[23] - flower_y) < 100.0f) {
+                    flower_far = 0; flower_matched = true;
                     flower_offset = (flower_x - (flower_direction == 2.0f ? 384.0f : 0.0f)) * (uw_factor() - 1.0f);
+                }
             }
             if (flower_seen && (vs->hash == "2fc962d8d063c1c9" || vs->hash == "a106c763cf05f818") &&
                 (fs->hash == "46841c209865a1c0" || fs->hash == "49add6de02fe8180") &&
-                std::fabs(f[3] - flower_x * flower_proj_x) < 32.0f && std::fabs(f[7] - flower_y * flower_proj_y) < 100.0f)
+                std::fabs(f[3] - flower_x * flower_proj_x) < 32.0f && std::fabs(f[7] - flower_y * flower_proj_y) < 100.0f) {
+                flower_far = 0; flower_matched = true;
                 flower_offset = (flower_x - (flower_direction == 2.0f ? 384.0f : 0.0f)) * (uw_factor() - 1.0f);
+            }
+            expire_if_far(flower_matched, flower_seen, flower_far, 4,
+                          f, flower_x, flower_y, flower_proj_x, flower_proj_y, 240.0f, 180.0f);
             for (const ResolvedTexture& r : g_textures.resolved) {
                 if (r.image && r.object && r.image->logical_width == 1920 && r.image->logical_height == 1080) {
                     flower_seen = false;
+                    flower_far = 0;
                     break;
                 }
             }
@@ -612,24 +635,32 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         static uint64_t card_frame = UINT64_MAX;
         static float card_x = 0.0f, card_y = 0.0f;
         static bool card_seen = false;
+        static unsigned card_far = 0;
+        static uint64_t msg_frame = UINT64_MAX;
+        static float msg_x = 0.0f, msg_y = 0.0f, msg_proj_x = 1.0f;
+        static bool msg_seen = false;
+        static unsigned msg_far = 0;
         const uint64_t frame = g_frame.load();
-        if (frame != card_frame) { card_frame = frame; card_seen = false; }
+        if (frame != card_frame) { card_frame = frame; card_seen = false; card_far = 0; }
         GpuImage* target = primary_target;
         const Range& u = g_state.uniforms[0][0];
         const float* f = u.address && u.size >= 96 ? reinterpret_cast<const float*>(guest_bytes(u.address)) : nullptr;
         if (target && target->logical_width == 1920 && target->logical_height == 1080 && f) {
             bool card_frame_texture = false;
+            bool card_matched = false;
             for (const ResolvedTexture& r : g_textures.resolved) {
                 GpuImage* img = r.image;
                 Texture* src = r.object;
                 if (img && src && img->logical_width == 88 && img->logical_height == 276 && src->format == 0x49)
                     card_frame_texture = true;
             }
-            if (card_frame_texture && vs->hash == "5587b5f73977f07e" && fs->hash == "e4ff94e7165656b5") {
-                card_x = f[19]; card_y = f[23]; card_seen = true;
+            if (card_frame_texture && f[23] > -280.0f && vs->hash == "5587b5f73977f07e" && fs->hash == "e4ff94e7165656b5") {
+                card_x = f[19]; card_y = f[23]; card_seen = true; card_far = 0; card_matched = true;
             }
-            if (card_seen && std::fabs(f[19] - card_x) < 8.0f && std::fabs(f[23] - card_y) < 100.0f)
+            if (card_seen && std::fabs(f[19] - card_x) < 8.0f && std::fabs(f[23] - card_y) < 100.0f) {
                 flower_offset = card_x * (uw_factor() - 1.0f);
+                card_far = 0; card_matched = true;
+            }
             // Extra pieces of the expanded card use their own transforms. Keep
             // their local spacing and apply the same anchor offset as the card.
             if (flags.detail && card_seen) {
@@ -644,19 +675,20 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 const bool detail_shape = vs->hash == "42ea61385aa6a70c" && fs->hash == "5bbd5392666b3406" &&
                     std::fabs(f[19] - card_x - 158.0f) < 5.0f && std::fabs(f[23] - card_y + 81.0f) < 10.0f;
                 if ((detail_texture || detail_shape) && std::fabs(f[19] - card_x) < 240.0f &&
-                    std::fabs(f[23] - card_y) < 120.0f)
+                    std::fabs(f[23] - card_y) < 120.0f) {
                     flower_offset = card_x * (uw_factor() - 1.0f);
+                    card_far = 0; card_matched = true;
+                }
                 if ((vs->hash == "2fc962d8d063c1c9" || vs->hash == "a106c763cf05f818") &&
                     (fs->hash == "46841c209865a1c0" || fs->hash == "49add6de02fe8180") &&
                     std::fabs(f[3] - card_x * 1.00833f) < 300.0f &&
-                    std::fabs(f[7] - card_y * 1.79259f) < 250.0f)
+                    std::fabs(f[7] - card_y * 1.79259f) < 250.0f) {
                     flower_offset = card_x * (uw_factor() - 1.0f);
+                    card_far = 0; card_matched = true;
+                }
             }
             if (flags.markers) {
-                static uint64_t msg_frame = UINT64_MAX;
-                static float msg_x = 0.0f, msg_y = 0.0f, msg_proj_x = 1.0f;
-                static bool msg_seen = false;
-                if (frame != msg_frame) { msg_frame = frame; msg_seen = false; }
+                if (frame != msg_frame) { msg_frame = frame; msg_seen = false; msg_far = 0; }
                 bool marker_icon = false, message_frame = false, seed_counter = false;
                 for (const ResolvedTexture& r : g_textures.resolved) {
                     GpuImage* img = r.image;
@@ -671,24 +703,35 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 }
                 if (card_seen && marker_icon && std::fabs(f[19] - card_x) < 200.0f &&
                     std::fabs(f[23] - card_y) < 130.0f &&
-                    (vs->hash == "42ea61385aa6a70c" || vs->hash == "6a4179388f4b1b2e"))
+                    (vs->hash == "42ea61385aa6a70c" || vs->hash == "6a4179388f4b1b2e")) {
                     flower_offset = card_x * (uw_factor() - 1.0f);
+                    card_far = 0; card_matched = true;
+                }
                 if (seed_counter && vs->hash == "42ea61385aa6a70c" && fs->hash == "5bbd5392666b3406")
                     flower_offset = f[19] * (uw_factor() - 1.0f);
+                bool msg_matched = false;
                 if (message_frame && std::fabs(f[16] - 0.8f) < 0.01f && vs->hash == "5587b5f73977f07e" && fs->hash == "e4ff94e7165656b5") {
-                    msg_x = f[19]; msg_y = f[23]; msg_proj_x = f[0]; msg_seen = true;
+                    msg_x = f[19]; msg_y = f[23]; msg_proj_x = f[0];
+                    msg_seen = true; msg_far = 0; msg_matched = true;
                     flower_offset = msg_x * (uw_factor() - 1.0f);
                 } else if (msg_seen && vs->hash == "9e68098b1e77c2fa" &&
                            std::fabs(f[23] - msg_y) < 100.0f && std::fabs(f[19] - msg_x) < 200.0f) {
+                    msg_far = 0; msg_matched = true;
                     flower_offset = msg_x * (uw_factor() - 1.0f);
                 } else if (msg_seen && vs->hash == "2fc962d8d063c1c9" &&
                            std::fabs(f[3] - msg_x * msg_proj_x) < 24.0f) {
+                    msg_far = 0; msg_matched = true;
                     flower_offset = msg_x * (uw_factor() - 1.0f);
                 } else if (msg_seen && vs->hash == "d0c055be04d18268" && fs->hash == "8886bf302ad2c2aa" &&
                            std::fabs(f[7] - msg_x * msg_proj_x) < 24.0f) {
+                    msg_far = 0; msg_matched = true;
                     flower_offset = msg_x * (uw_factor() - 1.0f);
                 }
+                expire_if_far(msg_matched, msg_seen, msg_far, 4,
+                              f, msg_x, msg_y, msg_proj_x, 1.79259f, 240.0f, 180.0f);
             }
+            expire_if_far(card_matched, card_seen, card_far, 3,
+                          f, card_x, card_y, 1.00833f, 1.79259f, 350.0f, 300.0f);
             bool menu_blur = false;
             for (const ResolvedTexture& r : g_textures.resolved) {
                 GpuImage* img = r.image;
@@ -697,7 +740,11 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
             if (menu_blur) {
                 card_seen = false;
+                card_far = 0;
+                msg_seen = false;
+                msg_far = 0;
                 flower_seen = false;
+                flower_far = 0;
             }
         }
     }
@@ -736,6 +783,27 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                  ((vs->hash == "6a4179388f4b1b2e" && fs->hash == "1642a92d1f3d654a") ||
                   (vs->hash == "e66384ab092a9d27" && fs->hash == "32686281e07a9149")))) {
                 flower_offset = f[19] * (uw_factor() - 1.0f);
+            }
+            if (flower_offset == 0.0f && uw_in_course_unpaused() && uw_vs_scaled(vs) &&
+                vs->hash != "5587b5f73977f07e") {
+                bool focus_crown = false;
+                for (const ResolvedTexture& r : g_textures.resolved) {
+                    GpuImage* img = r.image;
+                    Texture* src = r.object;
+                    if (img && src && src->format == 0x87 &&
+                        ((img->logical_width == 64 && img->logical_height == 64) ||
+                         (img->logical_width == 16 && img->logical_height == 26))) {
+                        focus_crown = true;
+                        break;
+                    }
+                }
+                if (focus_crown && std::fabs(f[23]) < 520.0f) {
+                    flower_offset = f[19] * (uw_factor() - 1.0f);
+                    static unsigned crown_logs = 0;
+                    if (crown_logs++ < 5)
+                        log("nvn: ultrawide: focus crown vs=%s fs=%s pos=%.1f,%.1f offset=%.1f",
+                            vs->hash.c_str(), fs->hash.c_str(), f[19], f[23], flower_offset);
+                }
             }
         }
     }

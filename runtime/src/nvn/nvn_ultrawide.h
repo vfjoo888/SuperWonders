@@ -26,6 +26,8 @@ extern bool g_uw_wide;
 void uw_span(int32_t& x, int32_t& w, uint32_t extent_w);
 void uw_cameras(uint64_t present);     // camera aspect patch (called at each present)
 void uw_scan(uint64_t present);        // NX_UW_SCAN debug
+void uw_set_in_course_unpaused(bool v);
+bool uw_in_course_unpaused();
 void uw_ui_vertex_shader(const ShaderInfo* vs);  // learned: drew into a UI layer target
 bool uw_is_ui_vertex_shader(const ShaderInfo* vs);
 bool uw_vs_scaled(const ShaderInfo* vs);  // does this vertex shader's x get scaled by 1/k (world and UI geometry)

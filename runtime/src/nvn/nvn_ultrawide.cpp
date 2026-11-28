@@ -229,6 +229,18 @@ void uw_cameras(uint64_t present) {
 
 bool g_uw_wide = false;
 
+namespace {
+std::atomic<bool> g_uw_in_course_unpaused{false};
+}
+
+void uw_set_in_course_unpaused(bool v) {
+    g_uw_in_course_unpaused.store(v, std::memory_order_relaxed);
+}
+
+bool uw_in_course_unpaused() {
+    return g_uw_in_course_unpaused.load(std::memory_order_relaxed);
+}
+
 void uw_span(int32_t& x, int32_t& w, uint32_t extent_w) {
     int64_t x0 = std::llround(double(x) * uw_factor());
     int64_t ww = int64_t(uw_widen(uint32_t(std::max(0, w))));
