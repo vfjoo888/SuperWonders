@@ -399,16 +399,45 @@ uint64_t reclaim_reusable_images_now() {
 // fence to copy write-backs, and overlaps the graphics pass execution and present with the next frame's CPU replay.
 // NX_PIPELINED=0: synchronous; 1..4: pipelined, that many submits in flight (2 at least). NX_ASYNC_GPU wins.
 bool pipelined() {
-    static const bool on = [] {
-        if (env_int("NX_ASYNC_GPU") > 0) return false;
-        const char* e = std::getenv("NX_PIPELINED");
-        return !e || std::atoi(e) > 0;
-    }();
+    static std::atomic<int> state{-1};
+    int s = state.load(std::memory_order_acquire);
+    if (s >= 0) return s == 1;
+    if (env_int("NX_ASYNC_GPU") > 0) {
+        state.store(0, std::memory_order_release);
+        return false;
+    }
+    if (const char* e = std::getenv("NX_PIPELINED"); e && *e) {
+        const bool on = std::atoi(e) > 0;
+        state.store(on ? 1 : 0, std::memory_order_release);
+        return on;
+    }
+    if (!vk_physical()) return false;
+    VkPhysicalDeviceProperties props{};
+    p_vkGetPhysicalDeviceProperties(vk_physical(), &props);
+    // Intel GPUs (e.g. Iris Xe, #155) jump back and forth between current and previous frames with async/pipelined
+    // submits; default to synchronous unless NX_PIPELINED=1 or NX_ASYNC_GPU=1 overrides it.
+    const bool on = props.vendorID != 0x8086;
+    if (!on) log("nvn/vk: Intel GPU detected: synchronous submits by default (NX_PIPELINED=1 to override)");
+    state.store(on ? 1 : 0, std::memory_order_release);
     return on;
 }
 
 bool async_gpu() {
-    static const bool on = pipelined() || env_int("NX_ASYNC_GPU") > 0;
+    static std::atomic<int> state{-1};
+    int s = state.load(std::memory_order_acquire);
+    if (s >= 0) return s == 1;
+    if (env_int("NX_ASYNC_GPU") > 0) {
+        state.store(1, std::memory_order_release);
+        return true;
+    }
+    if (const char* e = std::getenv("NX_PIPELINED"); e && *e) {
+        const bool on = std::atoi(e) > 0;
+        state.store(on ? 1 : 0, std::memory_order_release);
+        return on;
+    }
+    if (!vk_physical()) return false;
+    const bool on = pipelined();
+    state.store(on ? 1 : 0, std::memory_order_release);
     return on;
 }
 
