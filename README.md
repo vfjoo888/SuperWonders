@@ -34,6 +34,12 @@ I have tested the project on a Windows and Linux PC with an **NVIDIA GeForce RTX
 
 The recompilation targets the game's base version **1.0.0** and the **1.2.1** update.
 
+### Community benchmark reports
+
+- **NVIDIA GeForce 930M (2 GB DDR3 VRAM) / Intel Core i7-6600U / 8 GB DDR4-2133 / Kubuntu 26.04 LTS (AppImage)** ([#152](https://github.com/vfjoo888/SuperWonders/issues/152)):
+  - **Settings:** 720p, Bilinear upscaling, **Low VRAM profile enabled** (required to avoid crashing on 2 GB VRAM when loading), Anti-Aliasing disabled, default texture filtering.
+  - **Result:** Playable (~30 FPS mostly, with occasional drops; ~2 hours for first-run shader compilation; tested through Intro and World 1).
+
 ## Minimum hardware (provisional)
 
 I have not established a formally tested minimum yet. The current Windows build expects:
