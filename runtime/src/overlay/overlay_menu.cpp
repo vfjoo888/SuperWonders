@@ -1625,6 +1625,30 @@ void controls(MenuContext& c, const Labels& l) {
             if (rows::action(id, name, kHotkeyText[lang][5], true, waiting))
                 c.capture_action = int(kControlCount + h);
         }
+        static constexpr const char* kTitleQuitBtnText[13][2] = {
+            {"Quit game (pad)", "Controller button to hold on the title screen to quit the game."},
+            {"Esci dal gioco (pad)", "Tasto del controller da tenere premuto nella schermata del titolo per uscire dal gioco."},
+            {"Spiel beenden (Pad)", "Controller-Taste, die auf dem Titelbildschirm zum Beenden gedrückt gehalten wird."},
+            {"Quitter le jeu (manette)", "Bouton de la manette à maintenir sur l'écran-titre pour quitter le jeu."},
+            {"Salir del juego (mando)", "Botón del mando que se debe mantener pulsado en la pantalla de título para salir."},
+            {"게임 종료 (패드)", "타이틀 화면에서 길게 눌러 게임을 종료할 컨트롤러 버튼입니다."},
+            {"ゲーム終了 (パッド)", "タイトル画面で長押ししてゲームを終了するコントローラーのボタン。"},
+            {"إنهاء اللعبة (يد التحكم)", "زر يد التحكم الذي يُضغط مطولاً في شاشة العنوان لإنهاء اللعبة."},
+            {"Выход из игры (геймпад)", "Кнопка геймпада для удержания на титульном экране чтобы выйти из игры."},
+            {"Oyundan çık (kol)", "Başlık ekranında oyundan çıkmak için basılı tutulacak kumanda düğmesi."},
+            {"Spel afsluiten (pad)", "Controllerknop om op het titelscherm ingedrukt te houden om af te sluiten."},
+            {"退出游戏（手柄）", "在标题画面按住以退出游戏的手柄按键。"},
+            {"結束遊戲（控制器）", "在標題畫面按住以結束遊戲的控制器按鍵。"},
+        };
+        const char* quit_btns[kControlCount];
+        for (size_t i = 0; i < 12; ++i) quit_btns[i] = kActions[i];
+        for (size_t i = 0; i < 4; ++i) quit_btns[12 + i] = kInputDirections[lang][i];
+        int qbtn = std::clamp(s.title_quit_button, 0, int(kControlCount) - 1);
+        if (rows::choice(kTitleQuitBtnText[lang][0], &qbtn, quit_btns, int(kControlCount), kDefaults.title_quit_button,
+                         kTitleQuitBtnText[lang][1])) {
+            s.title_quit_button = qbtn;
+            settings_changed(true);
+        }
     }
     rows::section(kExtraUiText[lang].reset_sec);
     {
@@ -1647,6 +1671,7 @@ void controls(MenuContext& c, const Labels& l) {
                 if (c.host.default_keyboard_bindings[a]) s.keyboard_bindings[a] = c.host.default_keyboard_bindings[a];
             for (size_t h = 0; h < kHotkeyCount; ++h)
                 if (c.host.default_hotkey_bindings[h]) s.hotkey_bindings[h] = c.host.default_hotkey_bindings[h];
+            s.title_quit_button = kDefaults.title_quit_button;
             c.capture_action = -1;
             settings_changed(true);
             ui::notify(kExtraUiText[lang].reset_tab_note);

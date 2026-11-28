@@ -59,6 +59,7 @@ uint64_t g_previous_buttons = 0;
 
 int g_capture = -1;  // keyboard binding being captured
 int g_tab = 0;
+std::atomic<int> g_title_quit_button{CtlMinus};
 
 // Present intervals for the metrics panel (as platform_win.cpp's overlay).
 constexpr size_t kHistory = 300;
@@ -380,6 +381,8 @@ int menu_language() { return std::clamp(g_settings.language, 0, 12); }
 
 int game_language() { return std::clamp(g_settings.game_language, 0, 17); }
 
+int title_quit_button() { return std::clamp(g_title_quit_button.load(std::memory_order_relaxed), 0, int(kControlCount) - 1); }
+
 void set_game_version(const std::string& version) { g_game_version = version; }
 
 const std::string& game_version() { return g_game_version; }
@@ -389,6 +392,7 @@ void init(const Host& host, const Settings& s) {
     g_host = host;
     g_pending = s, g_has_pending = true;
     g_metrics = s.metrics_enabled;
+    g_title_quit_button.store(std::clamp(s.title_quit_button, 0, int(kControlCount) - 1), std::memory_order_relaxed);
     ui::set_theme(s.theme);
     discord::set_enabled(s.discord_rpc);
 }
@@ -397,12 +401,14 @@ void sync(const Settings& s) {
     std::lock_guard lk(g_lock);
     g_pending = s, g_has_pending = true;
     g_metrics = s.metrics_enabled;
+    g_title_quit_button.store(std::clamp(s.title_quit_button, 0, int(kControlCount) - 1), std::memory_order_relaxed);
     ui::set_theme(s.theme);
     discord::set_enabled(s.discord_rpc);
 }
 
 void settings_changed(bool persist) {
     g_metrics = g_settings.metrics_enabled;
+    g_title_quit_button.store(std::clamp(g_settings.title_quit_button, 0, int(kControlCount) - 1), std::memory_order_relaxed);
     discord::set_enabled(g_settings.discord_rpc);
     Host h;
     {

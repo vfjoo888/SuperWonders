@@ -92,6 +92,7 @@ struct PcMenuState {
     std::array<int, kPcControlCount> controller_bindings{};
     uint32_t controller_custom_mask = 0;
     std::array<int, kPcHotkeyCount> hotkey_bindings = {VK_F1, VK_F2, VK_F11, VK_TAB};
+    int title_quit_button = PcMinus;
 };
 
 using PcMenuApply = void (*)(const PcMenuState&, bool persist);

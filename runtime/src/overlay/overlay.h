@@ -35,6 +35,7 @@ bool enabled();  // NX_IMGUI_MENU, default on
 bool capturing_key();  // true while the Controls tab is waiting for a key press to bind
 int menu_language();  // selected launcher / in-game menu language, 0..12
 int game_language();  // selected game text language, 0..17
+int title_quit_button();        // 0..15 (Control enum, default CtlMinus): pad button held on title screen to quit
 void set_game_version(const std::string& version);
 const std::string& game_version();
 int aspect_ratio();

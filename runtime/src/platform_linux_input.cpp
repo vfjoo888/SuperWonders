@@ -595,9 +595,10 @@ void sample_input() {
         const bool separate = g_keyboard_separate.load();
         players[0] = p;
         connected[0] = true;
-        for (size_t slot = 0; slot < 4; ++slot) {
-            const size_t player = slot + (separate ? 1 : 0);
-            if (player >= 4 || !pad_connected[slot]) continue;
+        size_t next_player = separate ? 1 : 0;
+        for (size_t slot = 0; slot < 4 && next_player < 4; ++slot) {
+            if (!pad_connected[slot]) continue;
+            const size_t player = next_player++;
             player_slots[player] = int(slot); connected[player] = true;
             players[player].buttons |= physical_pads[slot].buttons;
             if (physical_pads[slot].lx) players[player].lx = physical_pads[slot].lx;

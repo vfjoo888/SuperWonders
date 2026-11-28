@@ -424,6 +424,7 @@ static overlay::Settings to_overlay(const PcMenuState& s) {
     for (size_t i = 0; i < kPcControlCount; ++i)
         o.keyboard_bindings[i] = s.keyboard_bindings[i], o.controller_bindings[i] = s.controller_bindings[i];
     for (size_t i = 0; i < kPcHotkeyCount; ++i) o.hotkey_bindings[i] = s.hotkey_bindings[i];
+    o.title_quit_button = s.title_quit_button;
     return o;
 }
 
@@ -454,6 +455,7 @@ static PcMenuState from_overlay(const overlay::Settings& o) {
     for (size_t i = 0; i < kPcControlCount; ++i)
         s.keyboard_bindings[i] = o.keyboard_bindings[i], s.controller_bindings[i] = o.controller_bindings[i];
     for (size_t i = 0; i < kPcHotkeyCount; ++i) s.hotkey_bindings[i] = o.hotkey_bindings[i];
+    s.title_quit_button = o.title_quit_button;
     return s;
 }
 
@@ -608,6 +610,7 @@ static void save_pc_settings() {
              << "controller_" << i << '=' << g_pc_settings.controller_bindings[i] << '\n';
     for (size_t i = 0; i < kPcHotkeyCount; ++i)
         file << "hotkey_" << i << '=' << g_pc_settings.hotkey_bindings[i] << '\n';
+    file << "title_quit_button=" << std::clamp(g_pc_settings.title_quit_button, 0, int(kPcControlCount) - 1) << '\n';
 }
 
 struct WinMonitorInfo {
@@ -721,6 +724,8 @@ static bool parse_pc_settings_file(const std::filesystem::path& ini_path, PcMenu
                                       value == 240
                                   ? value
                                   : 60;
+        else if (std::sscanf(line.c_str(), "title_quit_button=%d", &value) == 1)
+            state.title_quit_button = std::clamp(value, 0, int(kPcControlCount) - 1);
         else {
             int index = -1, binding = -1, slot = -1;
             unsigned mask = 0;
@@ -1950,9 +1955,10 @@ static PlayerInputs sample_players_uncached() {
         result.players[0] = keyboard;
         result.connected[0] = true;
         const bool separate = g_keyboard_separate.load();
-        for (size_t slot = 0; slot < 4; ++slot) {
-            const size_t player = slot + (separate ? 1 : 0);
-            if (!present[slot] || player >= 4) continue;
+        size_t next_player = separate ? 1 : 0;
+        for (size_t slot = 0; slot < 4 && next_player < 4; ++slot) {
+            if (!present[slot]) continue;
+            const size_t player = next_player++;
             auto& dest = result.players[player];
             dest.buttons |= physical[slot].buttons;
             if (physical[slot].lx) dest.lx = physical[slot].lx;

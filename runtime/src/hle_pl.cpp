@@ -17,6 +17,7 @@
 
 #include <nx/runtime.h>
 
+#include "overlay/overlay.h"
 #include "platform.h"
 #include "ttf_cmap_remap.h"
 
@@ -79,14 +80,15 @@ const Font& font(uint32_t type) {
 #if (defined(__linux__) && !defined(__ANDROID__)) || defined(_WIN32)
     if (type == 5 && !ttf.empty()) {
         const plat::ButtonPromptConfig cfg = plat::button_prompt_config();
-        bool remapped = remap_button_font_cmap(ttf, cfg.style, cfg.bindings);
+        const int quit_action = overlay::title_quit_button();
+        bool remapped = remap_button_font_cmap(ttf, cfg.style, cfg.bindings, quit_action);
         if (!remapped) {
             log("pl: shared_5.ttf lacks dynamic button icons; regenerating...");
             plat::make_dirs(root);
             const std::string target = root + "shared_5.ttf";
             if (plat::upgrade_button_font(target)) {
                 std::vector<uint8_t> upgraded = read_file(target);
-                if (!upgraded.empty() && remap_button_font_cmap(upgraded, cfg.style, cfg.bindings)) {
+                if (!upgraded.empty() && remap_button_font_cmap(upgraded, cfg.style, cfg.bindings, quit_action)) {
                     ttf = std::move(upgraded);
                     remapped = true;
                 }

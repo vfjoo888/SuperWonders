@@ -107,6 +107,8 @@ bool load_settings(const std::string& path, Settings& s) {
         else if (std::sscanf(l, "hdr_saturation=%d", &v) == 1) s.hdr_saturation = std::clamp(v, 0, 300);
         else if (std::sscanf(l, "hdr_highlight_saturation=%d", &v) == 1) s.hdr_highlight_saturation = std::clamp(v, 0, 300);
         else if (std::sscanf(l, "controller_custom_mask=%u", &u) == 1) s.controller_custom_mask = u;
+        else if (std::sscanf(l, "title_quit_button=%d", &v) == 1)
+            s.title_quit_button = std::clamp(v, 0, int(kControlCount) - 1);
         else {
             int index = -1, binding = -1, slot = -1;
             unsigned mask = 0;
@@ -189,6 +191,7 @@ void save_settings(const std::string& path, const Settings& s) {
           << "controller_" << i << '=' << s.controller_bindings[i] << '\n';
     for (size_t i = 0; i < kHotkeyCount; ++i)
         f << "hotkey_" << i << '=' << s.hotkey_bindings[i] << '\n';
+    f << "title_quit_button=" << std::clamp(s.title_quit_button, 0, int(kControlCount) - 1) << '\n';
 }
 
 }  // namespace nx::overlay

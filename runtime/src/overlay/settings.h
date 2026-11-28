@@ -76,6 +76,7 @@ struct Settings {
     std::array<int, kControlCount> controller_bindings{};
     uint32_t controller_custom_mask = 0;  // bit per action: controller_bindings[action] instead of the preset
     std::array<int, kHotkeyCount> hotkey_bindings{};  // 0: Menu, 1: Screenshot, 2: Fullscreen, 3: Fast-forward
+    int title_quit_button = CtlMinus;                 // pad button (0..15, Control enum) held on title screen to quit
 };
 
 // The physical button a preset gives an action.

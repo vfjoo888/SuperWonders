@@ -44,12 +44,25 @@ ICON_PANES = ("L_PlayerChangeBtn", "L_OptionBtn", "L_HelpBtn", "L_AmiiboBtn")
 TITLE_PANES = {"T_PressStart": "T_QuitGame", "T_PressStart_USEU": "T_QuitGameUS"}
 TITLE_POS, TITLE_SCALE = (700.0, -62.0), 0.75
 MINUS = "\ue0f0"  # the Minus button's glyph in the game's font (GameMsg/Key.msbt "Minus")
+QUIT_GLYPH = "\ue0f8"  # remapped in shared_5.ttf by runtime/src/ttf_cmap_remap.cpp to the configured quit button
 QUIT_TEXT = {
     "USen": "Quit Game", "EUen": "Quit Game", "USfr": "Quitter le jeu", "EUfr": "Quitter le jeu",
     "USes": "Salir del juego", "EUes": "Salir del juego", "EUde": "Spiel beenden", "EUit": "Esci dal gioco",
     "EUnl": "Spel afsluiten", "EUpt": "Sair do jogo", "USpt": "Sair do jogo", "EUru": "Выйти из игры",
     "EUpl": "Zakończ grę", "JPja": "ゲームを終了", "KRko": "게임 종료", "CNzh": "退出游戏", "TWzh": "結束遊戲",
     "THth": "ออกจากเกม",
+}
+TITLE_QUIT_TEXT = {
+    "USen": f"Hold {QUIT_GLYPH} to quit", "EUen": f"Hold {QUIT_GLYPH} to quit",
+    "USfr": f"Maintenir {QUIT_GLYPH} pour quitter", "EUfr": f"Maintenir {QUIT_GLYPH} pour quitter",
+    "USes": f"Mantén {QUIT_GLYPH} para salir", "EUes": f"Mantén {QUIT_GLYPH} para salir",
+    "EUde": f"{QUIT_GLYPH} gedrückt halten zum Beenden", "EUit": f"Tieni premuto {QUIT_GLYPH} per uscire",
+    "EUnl": f"Houd {QUIT_GLYPH} ingedrukt om te stoppen",
+    "EUpt": f"Segure {QUIT_GLYPH} para sair", "USpt": f"Segure {QUIT_GLYPH} para sair",
+    "EUru": f"Удерживайте {QUIT_GLYPH} для выхода", "EUpl": f"Przytrzymaj {QUIT_GLYPH}, aby wyjść",
+    "JPja": f"{QUIT_GLYPH}長押しで終了", "KRko": f"{QUIT_GLYPH} 길게 눌러 종료",
+    "CNzh": f"按住 {QUIT_GLYPH} 退出", "TWzh": f"按住 {QUIT_GLYPH} 結束",
+    "THth": f"กด {QUIT_GLYPH} ค้างไว้เพื่อออก",
 }
 
 
@@ -341,7 +354,7 @@ def patch_title_layout(d):
         struct.pack_into("<ff", clone, 0x44, TITLE_SCALE, TITLE_SCALE)
         buf = struct.unpack_from("<H", clone, 0x54)[0]
         text_at = struct.unpack_from("<I", clone, 0x64)[0]
-        text = (MINUS + " " + QUIT_TEXT["USen"]).encode("utf-16-le")[:buf - 2] + b"\0\0"
+        text = TITLE_QUIT_TEXT["USen"].encode("utf-16-le")[:buf - 2] + b"\0\0"
         clone[text_at:text_at + buf] = text.ljust(buf, b"\0")
         struct.pack_into("<H", clone, 0x56, len(text))
         out[nxt:nxt] = b"pas1" + struct.pack("<I", 8) + clone + b"pae1" + struct.pack("<I", 8)
@@ -503,7 +516,7 @@ def main():
         button = lambda m, lang=lang: msbt_add(m, QUIT_PANE + "-T_BtnName", QUIT_TEXT[lang])
         def title(m, lang=lang):
             for pane in TITLE_PANES.values():
-                m = msbt_add(m, pane, MINUS + " " + QUIT_TEXT[lang])
+                m = msbt_add(m, pane, TITLE_QUIT_TEXT[lang])
             return m
         mod("Mals/" + f, {"LayoutMsgRef/PauseRef.msbt": button, "LayoutMsgRef/TitleRef.msbt": title})
 

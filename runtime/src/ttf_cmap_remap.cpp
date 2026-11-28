@@ -226,7 +226,8 @@ void build_format12(const std::map<uint32_t, uint16_t>& cmap, std::vector<uint8_
 
 }  // namespace
 
-bool remap_button_font_cmap(std::vector<uint8_t>& ttf, int style, const std::array<int, 16>& action_to_physical) {
+bool remap_button_font_cmap(std::vector<uint8_t>& ttf, int style, const std::array<int, 16>& action_to_physical,
+                            int title_quit_action) {
     if (ttf.size() < 12) return false;
     const uint16_t num_tables = rd16(ttf.data() + 4);
     if (12ull + uint64_t(num_tables) * 16ull > ttf.size()) return false;
@@ -283,6 +284,9 @@ bool remap_button_font_cmap(std::vector<uint8_t>& ttf, int style, const std::arr
         const int phys = std::clamp(action_to_physical[m.action], 0, 15);
         cmap[m.codepoint] = phys_gids[size_t(phys)];
     }
+    const int quit_action = std::clamp(title_quit_action, 0, 15);
+    const int quit_phys = std::clamp(action_to_physical[size_t(quit_action)], 0, 15);
+    cmap[0xE0F8u] = phys_gids[size_t(quit_phys)];
 
     std::vector<uint8_t> f4, f12;
     if (!build_format4(cmap, f4)) return false;

@@ -14,6 +14,7 @@
 // Title screen: it has no buttons (it waits for L + R), so the mod adds a "(-) Quit Game" line and holding Minus there
 // quits. The title's sequence waits in an AINB node, WaitPressKeyInTitle, whose update (a virtual function, so also
 // swappable) runs every frame until L + R: while it runs, the title is up.
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 
@@ -22,6 +23,7 @@
 #include <nx/module.h>
 #include <nx/runtime.h>
 
+#include "overlay/overlay.h"
 #include "platform.h"
 
 
@@ -75,19 +77,24 @@ void pause_result_from_string(CPU& c) {
     g_pause.game(c);
 }
 
-// Minus held on its own this long quits: a held press, so a tap (or the start of Minus + Plus, the overlay's combo,
-// which the game never sees) does not.
+// Title-screen quit button held on its own this long quits: a held press, so a tap (or the start of Minus + Plus,
+// the overlay's combo, which the game never sees) does not.
 constexpr auto kHold = std::chrono::milliseconds(400);
 
-// The title takes any button as "start", Minus too: while Minus is held the game's update is held back (the title
-// keeps waiting), so a hold can quit; let go sooner and the update runs, and the title starts as it always did.
+// The title takes any button as "start": while the configured quit button is held, the game's update is held back (the
+// title keeps waiting), so a hold can quit; let go sooner and the update runs, and the title starts as it always did.
 void wait_press_key_in_title(CPU& c) {
-    static bool told = false;
-    if (!told) log("menu: the title screen is up (hold Minus to quit)"), told = true;
+    const int btn = std::clamp(overlay::title_quit_button(), 0, int(overlay::kControlCount) - 1);
+    const uint64_t quit_bit = 1ull << unsigned(btn);
+    static int logged_btn = -1;
+    if (logged_btn != btn) {
+        log("menu: the title screen is up (hold pad action %d to quit)", btn);
+        logged_btn = btn;
+    }
     static std::chrono::steady_clock::time_point since{};
-    if (hid_buttons() == plat::kMinus) {
+    if (hid_buttons() == quit_bit) {
         auto now = std::chrono::steady_clock::now();
-        if (since == std::chrono::steady_clock::time_point{}) since = now, log("menu: Minus held on the title screen");
+        if (since == std::chrono::steady_clock::time_point{}) since = now, log("menu: quit button held on the title screen");
         if (now - since >= kHold) quit(g_title.what);
         return;
     }
